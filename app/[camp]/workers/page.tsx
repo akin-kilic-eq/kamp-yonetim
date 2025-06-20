@@ -1,56 +1,109 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { getRooms, getWorkers, createWorker, updateWorker, deleteWorker, importWorkers } from '@/app/services/api';
+import { Room, Worker } from '../types';
+import ImportExcel from '@/components/ImportExcel';
+import PreviewModal from '@/components/PreviewModal';
 
-interface Worker {
-  id: string;
-  name: string;
-  registrationNumber: string;
-  project: string;
-  entryDate: string;
-  roomId?: string;
-}
-
-interface Room {
-  id: string;
-  campId: string;
-  number: string;
-  capacity: number;
-  project: string;
-  workers: Worker[];
-  availableBeds: number;
+interface WorkerWithRoom extends Worker {
+  roomNumber?: string;
 }
 
 export default function WorkersPage() {
-  const params = useParams();
   const router = useRouter();
   
   // State tanımlamaları
-  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [workers, setWorkers] = useState<WorkerWithRoom[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filteredWorkers, setFilteredWorkers] = useState<Worker[]>([]);
-  const [currentCamp, setCurrentCamp] = useState<any>(null);
+  const [currentCamp, setCurrentCamp] = useState<{ _id: string; id?: string; name: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>('');
   
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showChangeRoomModal, setShowChangeRoomModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   
   // Form states
-  const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
+  const [selectedWorker, setSelectedWorker] = useState<WorkerWithRoom | null>(null);
   const [newWorker, setNewWorker] = useState({
     name: '',
+    surname: '',
     registrationNumber: '',
     project: '',
+    roomId: '',
     entryDate: new Date().toISOString().split('T')[0]
   });
-  const [selectedRoom, setSelectedRoom] = useState('');
 
+  // Arama ve sıralama
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filteredWorkers, setFilteredWorkers] = useState<WorkerWithRoom[]>([]);
+  const [sortConfig, setSortConfig] = useState<{
+    key: keyof WorkerWithRoom;
+    direction: 'ascending' | 'descending';
+  } | null>(null);
+
+  // Import states
+  const [importData, setImportData] = useState<any[]>([]);
+  const [importProgress, setImportProgress] = useState(0);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Proje seçenekleri
+  const projectOptions = [
+    { label: 'Slava 4', value: 'Slava 4' },
+    { label: 'Slava 2-3', value: 'Slava 2-3' }
+  ];
+
+  // Verileri yükle
+  const loadData = async () => {
+    if (!currentCamp?._id) return;
+
+    try {
+      setLoading(true);
+      setError('');
+
+      // Odaları çek
+      const roomsData = await getRooms(currentCamp._id);
+      if (Array.isArray(roomsData)) {
+        setRooms(roomsData);
+      }
+
+      // İşçileri çek
+      const workersData = await getWorkers(currentCamp._id);
+      if (Array.isArray(workersData)) {
+        // İşçilere oda bilgilerini ekle
+        const workersWithRoomInfo = workersData.map(worker => {
+          let roomNumber = '-';
+          if (typeof worker.roomId === 'object' && worker.roomId !== null) {
+            roomNumber = worker.roomId.number;
+          } else if (typeof worker.roomId === 'string') {
+            const room = roomsData.find((r: Room) => r._id === worker.roomId);
+            roomNumber = room?.number || '-';
+          }
+          
+          return {
+            ...worker,
+            roomNumber
+          };
+        });
+        setWorkers(workersWithRoomInfo);
+        setFilteredWorkers(workersWithRoomInfo);
+      }
+    } catch (error) {
+      console.error('Veriler yüklenirken hata:', error);
+      setError('Veriler yüklenirken bir hata oluştu');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Oturum ve kamp kontrolü
   useEffect(() => {
-    // Oturum kontrolü
     const userSession = sessionStorage.getItem('currentUser');
     if (!userSession) {
       router.push('/login');
@@ -58,436 +111,510 @@ export default function WorkersPage() {
     }
 
     const user = JSON.parse(userSession);
+    setCurrentUser(user);
 
-    // Kampları yükle ve kullanıcının kampını bul
-    const camps = JSON.parse(localStorage.getItem('camps') || '[]');
-    const foundCamp = camps.find((camp: any) => 
-      camp.name.toLowerCase().replace(/\s+/g, '') === params.camp && 
-      camp.userEmail === user.email
-    );
-
-    if (!foundCamp) {
+    const campData = localStorage.getItem('currentCamp');
+    if (!campData) {
       router.push('/camps');
       return;
     }
 
-    setCurrentCamp(foundCamp);
+    const camp = JSON.parse(campData);
+    if (!camp._id && camp.id) {
+      camp._id = camp.id;
+    }
+    
+    setCurrentCamp(camp);
+  }, [router]);
 
-    // Odaları yükle
-    const allRooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-    const campRooms = allRooms.filter((room: Room) => room.campId === foundCamp.id);
-    setRooms(campRooms);
-
-    // İşçileri yükle
-    const workersFromRooms = campRooms.flatMap(room => room.workers);
-    setWorkers(workersFromRooms);
-    setFilteredWorkers(workersFromRooms);
-  }, [params.camp, router]);
+  // Verileri yükle
+  useEffect(() => {
+    if (currentCamp?._id) {
+      loadData();
+    }
+  }, [currentCamp]);
 
   // Arama fonksiyonu
   useEffect(() => {
     if (searchTerm.trim() === '') {
       setFilteredWorkers(workers);
     } else {
+      const searchTermLower = searchTerm.toLowerCase();
       const filtered = workers.filter(worker =>
-        worker.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        worker.registrationNumber.toLowerCase().includes(searchTerm.toLowerCase())
+        worker.name.toLowerCase().includes(searchTermLower) ||
+        worker.surname.toLowerCase().includes(searchTermLower) ||
+        worker.registrationNumber.toLowerCase().includes(searchTermLower)
       );
       setFilteredWorkers(filtered);
     }
   }, [searchTerm, workers]);
 
-  const handleAddWorker = () => {
-    if (!newWorker.name || !newWorker.registrationNumber || !newWorker.project || !selectedRoom) {
-      alert('Lütfen tüm alanları doldurun');
-      return;
+  // Sıralama fonksiyonu
+  const handleSort = (key: keyof WorkerWithRoom) => {
+    let direction: 'ascending' | 'descending' = 'ascending';
+    
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
     }
-
-    const selectedRoomData = rooms.find(room => room.id === selectedRoom);
-    if (!selectedRoomData) {
-      alert('Oda bulunamadı');
-      return;
-    }
-
-    // Boş yatak kontrolü
-    const availableBeds = selectedRoomData.capacity - selectedRoomData.workers.length;
-    if (availableBeds <= 0) {
-      alert('Seçilen odada boş yatak bulunmamaktadır');
-      return;
-    }
-
-    const workerData: Worker = {
-      id: Date.now().toString(),
-      ...newWorker,
-      roomId: selectedRoom
-    };
-
-    // Odaları güncelle
-    const updatedRooms = rooms.map(room => {
-      if (room.id === selectedRoom) {
-        return {
-          ...room,
-          workers: [...room.workers, workerData]
-        };
+    
+    const sorted = [...filteredWorkers].sort((a, b) => {
+      if (key === 'entryDate') {
+        const dateA = new Date(a[key] || '').getTime();
+        const dateB = new Date(b[key] || '').getTime();
+        return direction === 'ascending' ? dateA - dateB : dateB - dateA;
       }
-      return room;
+
+      const aValue = (a[key] || '').toString().toLowerCase();
+      const bValue = (b[key] || '').toString().toLowerCase();
+      
+      if (aValue < bValue) return direction === 'ascending' ? -1 : 1;
+      if (aValue > bValue) return direction === 'ascending' ? 1 : -1;
+      return 0;
     });
 
-    // Local storage güncelle
-    const allRooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-    const otherRooms = allRooms.filter((room: Room) => room.campId !== currentCamp.id);
-    localStorage.setItem('rooms', JSON.stringify([...otherRooms, ...updatedRooms]));
-
-    // State'leri güncelle
-    setRooms(updatedRooms);
-    const newWorkers = updatedRooms.flatMap(room => room.workers);
-    setWorkers(newWorkers);
-    setFilteredWorkers(newWorkers);
-
-    // Modalı kapat ve formu temizle
-    setShowAddModal(false);
-    setNewWorker({
-      name: '',
-      registrationNumber: '',
-      project: '',
-      entryDate: new Date().toISOString().split('T')[0]
-    });
-    setSelectedRoom('');
+    setFilteredWorkers(sorted);
+    setSortConfig({ key, direction });
   };
 
-  const handleUpdateWorker = () => {
-    if (!selectedWorker || !selectedWorker.name || !selectedWorker.registrationNumber || !selectedWorker.project) {
-      alert('Lütfen tüm alanları doldurun');
+  // İşçi ekleme
+  const handleAddWorker = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.roomId || !currentCamp) {
+      setError('Lütfen tüm alanları doldurun');
       return;
     }
 
-    // Odaları güncelle
-    const updatedRooms = rooms.map(room => {
-      if (room.workers.some(w => w.id === selectedWorker.id)) {
-        return {
-          ...room,
-          workers: room.workers.map(w => 
-            w.id === selectedWorker.id ? selectedWorker : w
-          )
-        };
+    try {
+      setError('');
+      const campId = currentCamp._id || currentCamp.id;
+      if (!campId) {
+        setError('Kamp bilgisi bulunamadı');
+        return;
       }
-      return room;
-    });
 
-    // Local storage güncelle
-    const allRooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-    const otherRooms = allRooms.filter((room: Room) => room.campId !== currentCamp.id);
-    localStorage.setItem('rooms', JSON.stringify([...otherRooms, ...updatedRooms]));
+      const response = await createWorker({
+        name: newWorker.name,
+        surname: newWorker.surname,
+        registrationNumber: newWorker.registrationNumber,
+        project: newWorker.project,
+        roomId: newWorker.roomId,
+        campId: campId,
+        entryDate: new Date(newWorker.entryDate).toISOString()
+      });
 
-    // State'leri güncelle
-    setRooms(updatedRooms);
-    const updatedWorkers = updatedRooms.flatMap(room => room.workers);
-    setWorkers(updatedWorkers);
-    setFilteredWorkers(updatedWorkers);
+      if (response.error) {
+        setError(response.error);
+        return;
+      }
 
-    // Modalı kapat
-    setShowEditModal(false);
-    setSelectedWorker(null);
+      await loadData();
+      setShowAddModal(false);
+      setNewWorker({
+        name: '',
+        surname: '',
+        registrationNumber: '',
+        project: '',
+        roomId: '',
+        entryDate: new Date().toISOString().split('T')[0]
+      });
+    } catch (error) {
+      setError('İşçi eklenirken bir hata oluştu');
+    }
   };
 
-  const handleDeleteWorker = () => {
-    if (!selectedWorker) return;
+  // İşçi güncelleme
+  const handleUpdateWorker = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedWorker || !currentCamp) return;
 
-    // Odaları güncelle
-    const updatedRooms = rooms.map(room => {
-      if (room.workers.some(w => w.id === selectedWorker.id)) {
-        return {
-          ...room,
-          workers: room.workers.filter(w => w.id !== selectedWorker.id),
-          availableBeds: room.availableBeds + 1
-        };
+    try {
+      setError('');
+      const campId = currentCamp._id || currentCamp.id;
+      if (!campId) {
+        setError('Kamp bilgisi bulunamadı');
+        return;
       }
-      return room;
-    });
 
-    // Local storage güncelle
-    const allRooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-    const otherRooms = allRooms.filter((room: Room) => room.campId !== currentCamp.id);
-    localStorage.setItem('rooms', JSON.stringify([...otherRooms, ...updatedRooms]));
+      const response = await updateWorker({
+        _id: selectedWorker._id,
+        name: selectedWorker.name,
+        surname: selectedWorker.surname,
+        registrationNumber: selectedWorker.registrationNumber,
+        project: selectedWorker.project,
+        roomId: selectedWorker.roomId,
+        campId: campId,
+        entryDate: selectedWorker.entryDate
+      });
+      
+      if (response.error) {
+        setError(response.error);
+        return;
+      }
 
-    // State'leri güncelle
-    setRooms(updatedRooms);
-    const remainingWorkers = updatedRooms.flatMap(room => room.workers);
-    setWorkers(remainingWorkers);
-    setFilteredWorkers(remainingWorkers);
-
-    // Modalı kapat
-    setShowDeleteModal(false);
-    setSelectedWorker(null);
+      await loadData();
+      setShowEditModal(false);
+      setSelectedWorker(null);
+    } catch (error) {
+      setError('İşçi güncellenirken bir hata oluştu');
+    }
   };
 
-  const handleChangeRoom = () => {
-    if (!selectedWorker || !selectedRoom) return;
+  // İşçi silme
+  const handleDeleteWorker = async () => {
+    if (!selectedWorker?._id) return;
 
-    // Eski ve yeni odaları bul
-    const currentRoom = rooms.find(room => room.workers.some(w => w.id === selectedWorker.id));
-    const targetRoom = rooms.find(room => room.id === selectedRoom);
+    try {
+      setError('');
+      const response = await deleteWorker(selectedWorker._id);
+      
+      if (response.error) {
+        setError(response.error);
+        return;
+      }
 
-    if (!currentRoom || !targetRoom) return;
+      await loadData();
+      setShowDeleteModal(false);
+      setSelectedWorker(null);
+    } catch (error) {
+      setError('İşçi silinirken bir hata oluştu');
+    }
+  };
 
-    // Boş yatak kontrolü
-    const availableBeds = targetRoom.capacity - targetRoom.workers.length;
-    if (availableBeds <= 0) {
-      alert('Seçilen odada boş yatak bulunmamaktadır');
+  // Oda değiştirme
+  const handleChangeRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedWorker || !currentCamp) return;
+
+    try {
+      setError('');
+      const campId = currentCamp._id || currentCamp.id;
+      if (!campId) {
+        setError('Kamp bilgisi bulunamadı');
+        return;
+      }
+
+      const response = await updateWorker({
+        _id: selectedWorker._id,
+        name: selectedWorker.name,
+        surname: selectedWorker.surname,
+        registrationNumber: selectedWorker.registrationNumber,
+        project: selectedWorker.project,
+        roomId: selectedWorker.roomId,
+        campId: campId,
+        entryDate: selectedWorker.entryDate
+      });
+      
+      if (response.error) {
+        setError(response.error);
+        return;
+      }
+
+      await loadData();
+      setShowChangeRoomModal(false);
+      setSelectedWorker(null);
+    } catch (error) {
+      setError('Oda değiştirilirken bir hata oluştu');
+    }
+  };
+
+  // Import işlemi
+  const handleImportPreview = (data: any[]) => {
+    const formattedData = data.map(row => ({
+      'Sicil No': row['Sicil No'],
+      'Adı Soyadı': row['Adı Soyadı'],
+      'Kaldığı Oda': row['Kaldığı Oda'],
+      'Çalıştığı Şantiye': row['Çalıştığı Şantiye'],
+      'Odaya Giriş Tarihi': row['Odaya Giriş Tarihi'],
+    }));
+    setImportData(formattedData);
+    setShowImportModal(true);
+  };
+
+  const handleImport = async () => {
+    if (!currentCamp?._id || importData.length === 0) {
+      setError('İçe aktarılacak veri veya kamp bilgisi bulunamadı');
       return;
     }
 
-    // Odaları güncelle
-    const updatedRooms = rooms.map(room => {
-      if (room.id === currentRoom.id) {
-        return {
-          ...room,
-          workers: room.workers.filter(w => w.id !== selectedWorker.id)
-        };
+    setIsImporting(true);
+    setImportProgress(0);
+    setError('');
+
+    try {
+      const workersToImport = importData.map(d => ({
+        'SICIL NO': d['Sicil No'],
+        'ADI SOYADI': d['Adı Soyadı'],
+        'KALDIĞI ODA': d['Kaldığı Oda'],
+        'ÇALIŞTIĞI ŞANTİYE': d['Çalıştığı Şantiye'],
+        'Odaya Giriş Tarihi': d['Odaya Giriş Tarihi'],
+      }));
+
+      const response = await importWorkers(currentCamp._id, workersToImport);
+
+      if ('error' in response) {
+        console.error('Import API error:', response.error);
+        setError(response.error);
+        return;
       }
-      if (room.id === targetRoom.id) {
-        return {
-          ...room,
-          workers: [...room.workers, { ...selectedWorker, roomId: room.id }]
-        };
+
+      // İşlem başarılı mesajı
+      setError(`${response.results.success} işçi başarıyla içe aktarıldı`);
+      if (response.results.failed > 0) {
+        console.error('Import hataları:', response.results.errors);
+        setError(prev => `${prev}. ${response.results.failed} işçi aktarılamadı.`);
       }
-      return room;
-    });
+      
+      setShowImportModal(false);
+      setImportData([]);
+      
+      // Verilerin MongoDB'ye yazılması için kısa bir bekleme
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Verileri yeniden yükle
+      await loadData();
 
-    // Local storage güncelle
-    const allRooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-    const otherRooms = allRooms.filter((room: Room) => room.campId !== currentCamp.id);
-    localStorage.setItem('rooms', JSON.stringify([...otherRooms, ...updatedRooms]));
-
-    // State'leri güncelle
-    setRooms(updatedRooms);
-    const updatedWorkers = updatedRooms.flatMap(room => room.workers);
-    setWorkers(updatedWorkers);
-    setFilteredWorkers(updatedWorkers);
-
-    // Modalı kapat
-    setShowChangeRoomModal(false);
-    setSelectedRoom('');
-    setSelectedWorker(null);
+    } catch (error) {
+      console.error('Import error:', error);
+      setError('İçe aktarma sırasında bir hata oluştu');
+    } finally {
+      setIsImporting(false);
+      setImportProgress(0);
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-lg">Yükleniyor...</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">İşçi Yönetimi</h1>
-            <p className="mt-2 text-sm text-gray-600">Kamptaki tüm işçilerin listesi ve detayları</p>
-          </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            Yeni İşçi Ekle
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-white shadow-sm rounded-lg overflow-hidden">
-        <div className="p-4 border-b border-gray-200">
-          <div className="relative">
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="İsim veya sicil numarasına göre ara..."
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm pl-10 py-2"
-            />
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+    <div className="min-h-screen bg-[url('/arkaplan.jpg')] bg-cover bg-center bg-fixed">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6">
+          {/* Başlık ve Butonlar */}
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">İşçi Listesi</h1>
+              <p className="text-gray-600">Toplam {filteredWorkers.length} işçi</p>
+            </div>
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowImportModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              >
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                Excel'den İçe Aktar
+              </button>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                Yeni İşçi Ekle
+              </button>
             </div>
           </div>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  İsim
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Sicil No
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Proje
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Giriş Tarihi
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Oda
-                </th>
-                <th scope="col" className="relative px-6 py-3">
-                  <span className="sr-only">İşlemler</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredWorkers.map((worker) => {
-                const workerRoom = rooms.find(room => room.workers.some(w => w.id === worker.id));
-                return (
-                  <tr key={worker.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{worker.name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{worker.registrationNumber}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{worker.project}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{worker.entryDate}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {workerRoom?.number || '-'}
+          {/* Arama */}
+          <div className="mb-6">
+            <input
+              type="text"
+              placeholder="İsim, soyisim veya sicil no ile ara..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          {/* Hata mesajı */}
+          {error && (
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+              {error}
+            </div>
+          )}
+
+          {/* İşçiler tablosu */}
+          <div className="overflow-x-auto">
+            <table className="min-w-full bg-white border">
+              <thead>
+                <tr className="bg-gray-100">
+                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('name')}>
+                    İsim {sortConfig?.key === 'name' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
+                  </th>
+                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('surname')}>
+                    Soyisim {sortConfig?.key === 'surname' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
+                  </th>
+                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('registrationNumber')}>
+                    Sicil No {sortConfig?.key === 'registrationNumber' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
+                  </th>
+                  <th className="px-4 py-2 text-left">Proje</th>
+                  <th className="px-4 py-2 text-left">Oda No</th>
+                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('entryDate')}>
+                    Giriş Tarihi {sortConfig?.key === 'entryDate' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
+                  </th>
+                  <th className="px-4 py-2 text-right">İşlemler</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredWorkers.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                      {searchTerm ? 'Arama sonucu bulunamadı' : 'Henüz işçi eklenmemiş'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex justify-end space-x-2">
+                  </tr>
+                ) : (
+                  filteredWorkers.map((worker) => (
+                    <tr key={worker._id} className="border-t hover:bg-gray-50">
+                      <td className="px-4 py-2 text-left">{worker.name}</td>
+                      <td className="px-4 py-2 text-left">{worker.surname}</td>
+                      <td className="px-4 py-2 text-left">{worker.registrationNumber}</td>
+                      <td className="px-4 py-2 text-left">{worker.project}</td>
+                      <td className="px-4 py-2 text-left">{worker.roomNumber}</td>
+                      <td className="px-4 py-2 text-left">
+                        {new Date(worker.entryDate).toLocaleDateString('tr-TR')}
+                      </td>
+                      <td className="px-4 py-2 text-right">
                         <button
                           onClick={() => {
                             setSelectedWorker(worker);
                             setShowEditModal(true);
                           }}
-                          className="text-blue-600 hover:text-blue-900"
+                          className="text-blue-500 hover:text-blue-700 mr-2"
                         >
                           Düzenle
                         </button>
                         <button
                           onClick={() => {
                             setSelectedWorker(worker);
-                            setShowChangeRoomModal(true);
+                            setShowDeleteModal(true);
                           }}
-                          className="text-green-600 hover:text-green-900"
+                          className="text-red-500 hover:text-red-700"
                         >
-                          Oda Değiştir
+                          Sil
                         </button>
                         <button
                           onClick={() => {
                             setSelectedWorker(worker);
-                            setShowDeleteModal(true);
+                            setShowChangeRoomModal(true);
                           }}
-                          className="text-red-600 hover:text-red-900"
+                          className="text-green-500 hover:text-green-700 ml-2"
                         >
-                          Sil
+                          Oda Değiştir
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
+      {/* Modalları ana container'ın dışına taşıyorum */}
       {/* Yeni İşçi Ekleme Modalı */}
       {showAddModal && (
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Yeni İşçi Ekle</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-                  Ad Soyad
-                </label>
+            <h2 className="text-xl font-bold mb-4">Yeni İşçi Ekle</h2>
+            <form onSubmit={handleAddWorker}>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">İsim *</label>
                 <input
                   type="text"
-                  id="name"
                   value={newWorker.name}
                   onChange={(e) => setNewWorker({ ...newWorker, name: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="registrationNumber" className="block text-sm font-medium text-gray-700">
-                  Sicil No
-                </label>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Soyisim *</label>
                 <input
                   type="text"
-                  id="registrationNumber"
-                  value={newWorker.registrationNumber}
-                  onChange={(e) => setNewWorker({ ...newWorker, registrationNumber: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  value={newWorker.surname}
+                  onChange={(e) => setNewWorker({ ...newWorker, surname: e.target.value })}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="project" className="block text-sm font-medium text-gray-700">
-                  Şantiye
-                </label>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Sicil No *</label>
+                <input
+                  type="text"
+                  value={newWorker.registrationNumber}
+                  onChange={(e) => setNewWorker({ ...newWorker, registrationNumber: e.target.value })}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Proje *</label>
                 <select
-                  id="project"
                   value={newWorker.project}
                   onChange={(e) => setNewWorker({ ...newWorker, project: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 >
-                  <option value="">Seçiniz</option>
-                  <option value="Slava 4">Slava 4</option>
-                  <option value="Slava 2-3">Slava 2-3</option>
+                  <option value="">Proje Seçin</option>
+                  {projectOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="room" className="block text-sm font-medium text-gray-700">
-                  Oda
-                </label>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Oda *</label>
                 <select
-                  id="room"
-                  value={selectedRoom}
-                  onChange={(e) => setSelectedRoom(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  value={newWorker.roomId}
+                  onChange={(e) => setNewWorker({ ...newWorker, roomId: e.target.value })}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 >
                   <option value="">Oda Seçin</option>
                   {rooms
-                    .filter(room => {
-                      const availableBeds = room.capacity - room.workers.length;
-                      return availableBeds > 0;
-                    })
-                    .map(room => {
-                      const availableBeds = room.capacity - room.workers.length;
-                      return (
-                        <option key={room.id} value={room.id}>
-                          Oda {room.number} ({availableBeds} Boş Yatak)
-                        </option>
-                      );
-                    })}
+                    .filter(room => room.availableBeds > 0)
+                    .map((room) => (
+                      <option key={room._id} value={room._id}>
+                        Oda {room.number} ({room.availableBeds} boş yatak)
+                      </option>
+                    ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="entryDate" className="block text-sm font-medium text-gray-700">
-                  Odaya Giriş Tarihi
-                </label>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Giriş Tarihi *</label>
                 <input
                   type="date"
-                  id="entryDate"
                   value={newWorker.entryDate}
                   onChange={(e) => setNewWorker({ ...newWorker, entryDate: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowAddModal(false);
-                  setNewWorker({
-                    name: '',
-                    registrationNumber: '',
-                    project: '',
-                    entryDate: new Date().toISOString().split('T')[0]
-                  });
-                  setSelectedRoom('');
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                İptal
-              </button>
-              <button
-                onClick={handleAddWorker}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700"
-              >
-                Ekle
-              </button>
-            </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Ekle
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -496,77 +623,93 @@ export default function WorkersPage() {
       {showEditModal && selectedWorker && (
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">İşçi Düzenle</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="editName" className="block text-sm font-medium text-gray-700">
-                  Ad Soyad
-                </label>
+            <h2 className="text-xl font-bold mb-4">İşçi Düzenle</h2>
+            <form onSubmit={handleUpdateWorker}>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">İsim *</label>
                 <input
                   type="text"
-                  id="editName"
                   value={selectedWorker.name}
                   onChange={(e) => setSelectedWorker({ ...selectedWorker, name: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="editRegistrationNumber" className="block text-sm font-medium text-gray-700">
-                  Sicil No
-                </label>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Soyisim *</label>
                 <input
                   type="text"
-                  id="editRegistrationNumber"
+                  value={selectedWorker.surname}
+                  onChange={(e) => setSelectedWorker({ ...selectedWorker, surname: e.target.value })}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Sicil No *</label>
+                <input
+                  type="text"
                   value={selectedWorker.registrationNumber}
                   onChange={(e) => setSelectedWorker({ ...selectedWorker, registrationNumber: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="editProject" className="block text-sm font-medium text-gray-700">
-                  Şantiye
-                </label>
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Proje *</label>
                 <select
-                  id="editProject"
                   value={selectedWorker.project}
                   onChange={(e) => setSelectedWorker({ ...selectedWorker, project: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 >
-                  <option value="">Seçiniz</option>
-                  <option value="Slava 4">Slava 4</option>
-                  <option value="Slava 2-3">Slava 2-3</option>
+                  <option value="">Proje Seçin</option>
+                  {projectOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="editEntryDate" className="block text-sm font-medium text-gray-700">
-                  Odaya Giriş Tarihi
-                </label>
-                <input
-                  type="date"
-                  id="editEntryDate"
-                  value={selectedWorker.entryDate}
-                  onChange={(e) => setSelectedWorker({ ...selectedWorker, entryDate: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                />
+              <div className="mb-4">
+                <label className="block mb-1 font-medium">Oda *</label>
+                <select
+                  value={typeof selectedWorker.roomId === 'string' ? selectedWorker.roomId : selectedWorker.roomId._id}
+                  onChange={(e) => setSelectedWorker({ ...selectedWorker, roomId: e.target.value })}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="">Oda Seçin</option>
+                  {rooms.map((room) => {
+                    const isCurrentRoom = typeof selectedWorker.roomId === 'string' 
+                      ? selectedWorker.roomId === room._id
+                      : selectedWorker.roomId._id === room._id;
+                    const availableBeds = isCurrentRoom ? room.availableBeds + 1 : room.availableBeds;
+                    
+                    return (
+                      <option key={room._id} value={room._id}>
+                        Oda {room.number} ({availableBeds} boş yatak)
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowEditModal(false);
-                  setSelectedWorker(null);
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                İptal
-              </button>
-              <button
-                onClick={handleUpdateWorker}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700"
-              >
-                Kaydet
-              </button>
-            </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Güncelle
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -575,23 +718,20 @@ export default function WorkersPage() {
       {showDeleteModal && selectedWorker && (
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">İşçi Sil</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              {selectedWorker.name} isimli işçiyi silmek istediğinize emin misiniz?
+            <h2 className="text-xl font-bold mb-4">İşçi Sil</h2>
+            <p className="mb-4">
+              <strong>{selectedWorker.name} {selectedWorker.surname}</strong> isimli işçiyi silmek istediğinizden emin misiniz?
             </p>
-            <div className="flex justify-end space-x-3">
+            <div className="flex justify-end gap-2">
               <button
-                onClick={() => {
-                  setShowDeleteModal(false);
-                  setSelectedWorker(null);
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
               >
                 İptal
               </button>
               <button
                 onClick={handleDeleteWorker}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 border border-transparent rounded-md hover:bg-red-700"
+                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
               >
                 Sil
               </button>
@@ -604,14 +744,13 @@ export default function WorkersPage() {
       {showChangeRoomModal && selectedWorker && (
         <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Oda Değiştir</h3>
+            <h2 className="text-xl font-bold mb-4">Oda Değiştir</h2>
             <p className="text-sm text-gray-600 mb-2">
-              {selectedWorker.name} isimli işçinin;
+              {selectedWorker.name} {selectedWorker.surname} isimli işçinin;
             </p>
-            {/* Mevcut oda bilgisi */}
             <div className="bg-gray-50 p-3 rounded-md mb-4">
               <p className="text-sm font-medium text-gray-700">
-                Mevcut Odası: {rooms.find(room => room.workers.some(w => w.id === selectedWorker.id))?.number || '-'}
+                Mevcut Odası: {typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId.number : rooms.find(room => room._id === selectedWorker.roomId)?.number || '-'}
               </p>
             </div>
             <div className="mb-4">
@@ -620,55 +759,98 @@ export default function WorkersPage() {
               </label>
               <select
                 id="newRoom"
-                value={selectedRoom}
-                onChange={(e) => setSelectedRoom(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                value={typeof selectedWorker.roomId === 'string' ? selectedWorker.roomId : selectedWorker.roomId._id}
+                onChange={(e) => setSelectedWorker({ ...selectedWorker, roomId: e.target.value })}
+                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
               >
                 <option value="">Oda Seçin</option>
                 {rooms
                   .filter(room => {
-                    const isCurrentRoom = room.workers.some(w => w.id === selectedWorker.id);
-                    const availableBeds = room.capacity - room.workers.length;
-                    return !isCurrentRoom && availableBeds > 0;
+                    const currentRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
+                    const isCurrentRoom = room._id === currentRoomId;
+                    const hasAvailableBeds = room.availableBeds > 0;
+                    return !isCurrentRoom && hasAvailableBeds;
                   })
-                  .map(room => {
-                    const availableBeds = room.capacity - room.workers.length;
-                    return (
-                      <option key={room.id} value={room.id}>
-                        Oda {room.number} ({availableBeds} Boş Yatak)
-                      </option>
-                    );
-                  })}
+                  .map(room => (
+                    <option key={room._id} value={room._id}>
+                      Oda {room.number} ({room.availableBeds} Boş Yatak)
+                    </option>
+                  ))}
               </select>
               {rooms.filter(room => {
-                const isCurrentRoom = room.workers.some(w => w.id === selectedWorker.id);
-                return !isCurrentRoom && room.availableBeds > 0;
+                const currentRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
+                return room._id !== currentRoomId && room.availableBeds > 0;
               }).length === 0 && (
                 <p className="mt-2 text-sm text-red-600">
                   Şu anda boş yatak bulunan oda bulunmamaktadır.
                 </p>
               )}
             </div>
-            <div className="flex justify-end space-x-3">
+            <div className="flex justify-end gap-2">
               <button
-                onClick={() => {
-                  setShowChangeRoomModal(false);
-                  setSelectedRoom('');
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                type="button"
+                onClick={() => setShowChangeRoomModal(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
               >
                 İptal
               </button>
               <button
                 onClick={handleChangeRoom}
-                disabled={!selectedRoom}
-                className={`px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md ${
-                  selectedRoom ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'
-                }`}
+                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
               >
                 Değiştir
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Excel'den İçe Aktar</h2>
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportData([]);
+                  setError('');
+                }}
+                className="text-gray-400 hover:text-gray-500"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {importData.length > 0 ? (
+              <PreviewModal
+                data={importData}
+                onConfirm={handleImport}
+                onCancel={() => {
+                  setImportData([]);
+                  setError('');
+                }}
+                onClose={() => {
+                  setShowImportModal(false);
+                  setImportData([]);
+                  setError('');
+                }}
+                isLoading={isImporting}
+                type="workers"
+              />
+            ) : (
+              <ImportExcel
+                onImport={handleImportPreview}
+                onPreview={handleImportPreview}
+                isLoading={isImporting}
+                progress={importProgress}
+                type="workers"
+              />
+            )}
           </div>
         </div>
       )}

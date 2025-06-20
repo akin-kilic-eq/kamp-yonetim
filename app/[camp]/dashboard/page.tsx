@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { FaBed, FaUserFriends, FaChartPie, FaBuilding, FaDoorOpen, FaUsersCog, FaChartBar } from 'react-icons/fa';
+import { getRooms } from '@/app/services/api';
 
 interface Stats {
   totalRooms: number;
@@ -11,6 +12,13 @@ interface Stats {
   availableBeds: number;
   totalWorkers: number;
   occupancyRate: number;
+}
+
+interface Camp {
+  id: string;
+  name: string;
+  userEmail: string;
+  sharedWith?: string[];
 }
 
 export default function CampDashboard({ params }: { params: { camp: string } }) {
@@ -25,6 +33,8 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
     totalWorkers: 0,
     occupancyRate: 0
   });
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
 
   useEffect(() => {
     // Oturum kontrolü
@@ -35,43 +45,57 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
     }
 
     const user = JSON.parse(userSession);
+    setCurrentUser(user);
 
-    // Kampları yükle ve kullanıcının kampını bul
-    const camps = JSON.parse(localStorage.getItem('camps') || '[]');
-    const currentCamp = camps.find((camp: any) => 
-      camp.name.toLowerCase().replace(/\s+/g, '') === params.camp && 
-      camp.userEmail === user.email
-    );
-
-    if (!currentCamp) {
+    // Mevcut kampı kontrol et
+    const currentCampData = localStorage.getItem('currentCamp');
+    if (!currentCampData) {
       router.push('/camps');
       return;
     }
 
-    setCampName(currentCamp.name);
-    setCampDescription(currentCamp.description || '');
+    const camp = JSON.parse(currentCampData);
+    
+    // Erişim kontrolü - hem kamp sahibi hem de paylaşılan kullanıcılar erişebilir
+    const hasAccess = camp.userEmail === user.email || (camp.sharedWith || []).includes(user.email);
+    if (!hasAccess) {
+      router.push('/camps');
+      return;
+    }
 
-    // İstatistikleri hesapla
-    const rooms = JSON.parse(localStorage.getItem('rooms') || '[]');
-    const campRooms = rooms.filter((room: any) => room.campId === currentCamp.id);
+    setCurrentCamp(camp);
+    
+    // MongoDB'den oda ve işçi verilerini çek
+    const loadStats = async () => {
+      try {
+        // Odaları çek
+        const rooms = await getRooms(camp._id);
+        if (!Array.isArray(rooms)) return;
 
-    const totalRooms = campRooms.length;
-    const totalCapacity = campRooms.reduce((sum: number, room: any) => sum + room.capacity, 0);
-    const occupiedBeds = campRooms.reduce((sum: number, room: any) => 
-      sum + (room.workers ? room.workers.length : 0), 0);
-    const availableBeds = totalCapacity - occupiedBeds;
-    const totalWorkers = occupiedBeds;
-    const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
+        // İstatistikleri hesapla
+        const totalRooms = rooms.length;
+        const totalCapacity = rooms.reduce((sum, room) => sum + room.capacity, 0);
+        const occupiedBeds = rooms.reduce((sum, room) => sum + (room.capacity - room.availableBeds), 0);
+        const availableBeds = rooms.reduce((sum, room) => sum + room.availableBeds, 0);
+        const totalWorkers = occupiedBeds; // Dolu yatak sayısı = toplam işçi sayısı
+        const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
 
-    setStats({
-      totalRooms,
-      totalCapacity,
-      occupiedBeds,
-      availableBeds,
-      totalWorkers,
-      occupancyRate
-    });
-  }, [params.camp, router]);
+        // Stats state'ini güncelle
+        setStats({
+          totalRooms,
+          totalCapacity,
+          occupiedBeds,
+          availableBeds,
+          totalWorkers,
+          occupancyRate
+        });
+      } catch (error) {
+        console.error('İstatistikler yüklenirken hata:', error);
+      }
+    };
+
+    loadStats();
+  }, [router]);
 
   const handleLogout = () => {
     sessionStorage.removeItem('currentUser');
@@ -83,9 +107,8 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8">
           <div className="text-center w-full">
-            <p className="text-lg font-semibold text-gray-700">{campName}</p>
-            <h1 className="text-2xl font-bold text-gray-900 mt-2">Kamp Yönetim Paneli</h1>
-            <p className="text-gray-600 mt-2">{campDescription}</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">{currentCamp?.name}</h1>
+            <h2 className="text-xl text-gray-700">Kamp Yönetim Paneli</h2>
           </div>
         </div>
 
@@ -161,6 +184,7 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
               </div>
             </div>
           </div>
+
           <div 
             onClick={() => router.push(`/${params.camp}/rooms`)}
             className="bg-gradient-to-br from-purple-500 to-purple-600 overflow-hidden shadow-lg rounded-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer"
@@ -175,6 +199,7 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
               </div>
             </div>
           </div>
+
           <div 
             onClick={() => router.push(`/${params.camp}/report`)}
             className="bg-gradient-to-br from-green-500 to-green-600 overflow-hidden shadow-lg rounded-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer sm:col-span-2"
@@ -193,4 +218,4 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
       </div>
     </div>
   );
-} 
+}
