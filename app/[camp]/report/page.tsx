@@ -440,11 +440,19 @@ export default function ReportPage() {
   };
 
   const handleExportExcel = () => {
-    // Güncel tarihi formatla
-    const today = new Date();
-    const formattedDate = today.toLocaleDateString('tr-TR').replace(/\./g, '-');
+    if (!currentCamp) return;
 
-    // Temel stiller
+    const campName = currentCamp.name.replace(/\\s+/g, '_');
+    const today = new Date();
+    const formattedDate = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
+    const fileName = `${campName}_${formattedDate}.xlsx`;
+
+    const headerCellStyle: CellStyle = {
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+      font: { name: 'Times New Roman', bold: true, sz: 13 }
+    };
+
     const baseStyle: CellStyle = {
       border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
       alignment: { horizontal: 'center', vertical: 'center' }
@@ -476,10 +484,7 @@ export default function ReportPage() {
     // Tarih bilgisini ekle
     XLSX.utils.sheet_add_aoa(ws, [[{
       v: 'Tarih: ' + today.toLocaleDateString('tr-TR'),
-      s: {
-        font: { name: 'Times New Roman', bold: true, sz: 13 },
-        alignment: { horizontal: 'left' }
-      }
+      s: headerCellStyle
     }]], { origin: 'B2' });
 
     // B2 ve C2 hücrelerini birleştir
@@ -489,10 +494,7 @@ export default function ReportPage() {
     // Genel Durum başlığını ekle ve hücrelerini birleştir
     XLSX.utils.sheet_add_aoa(ws, [[{
       v: 'Genel Durum',
-      s: {
-        ...headerStyle,
-        alignment: { horizontal: 'center', vertical: 'center' }
-      }
+      s: headerStyle
     }]], { origin: 'B4' });
     ws['!merges'].push({ s: { r: 3, c: 1 }, e: { r: 3, c: 3 } });
 
@@ -513,10 +515,7 @@ export default function ReportPage() {
     // Oda Sayısı başlığını ekle ve hücrelerini birleştir
     XLSX.utils.sheet_add_aoa(ws, [[{
       v: 'Oda Sayısı',
-      s: {
-        ...headerStyle,
-        alignment: { horizontal: 'center', vertical: 'center' }
-      }
+      s: headerStyle
     }]], { origin: 'F4' });
     ws['!merges'].push({ s: { r: 3, c: 5 }, e: { r: 3, c: 6 } });
 
@@ -535,10 +534,7 @@ export default function ReportPage() {
     // Oda Dolulukları bölümünü ekle
     XLSX.utils.sheet_add_aoa(ws, [[{
       v: 'Oda Dolulukları',
-      s: {
-        ...headerStyle,
-        alignment: { horizontal: 'center', vertical: 'center' }
-      }
+      s: headerStyle
     }]], { origin: 'I4' });
     ws['!merges'].push({ s: { r: 3, c: 8 }, e: { r: 3, c: 9 } });
 
@@ -656,7 +652,7 @@ export default function ReportPage() {
     const wb = XLSX.utils.book_new();
     
     // Ana rapor sayfasını ekle
-    XLSX.utils.book_append_sheet(wb, ws, 'Rapor');
+    XLSX.utils.book_append_sheet(wb, ws, 'Kamp Raporu');
 
     // Oda Detayları sayfasını oluştur
     const wsRooms = XLSX.utils.aoa_to_sheet([]);
@@ -817,7 +813,7 @@ export default function ReportPage() {
     XLSX.utils.book_append_sheet(wb, wsWorkers, 'İşçi Listesi');
 
     // Excel dosyasını indir
-    XLSX.writeFile(wb, `Kamp Raporu, ${formattedDate}.xlsx`);
+    XLSX.writeFile(wb, fileName);
   };
 
   return (
