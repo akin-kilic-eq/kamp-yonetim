@@ -4,6 +4,24 @@ import Camp from '@/app/models/Camp';
 import { NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongodb';
 
+async function checkWritePermission(campId: string, userEmail: string): Promise<boolean> {
+  const camp = await Camp.findById(campId);
+  if (!camp) return false; // Kamp bulunamadı
+
+  // Kullanıcı kampın sahibi mi?
+  if (camp.userEmail === userEmail) {
+    return true;
+  }
+
+  // Kullanıcının paylaşım listesinde yazma izni var mı?
+  const hasPermission = camp.sharedWith.some(
+    (share: { email: string; permission: string }) =>
+      share.email === userEmail && share.permission === 'write'
+  );
+
+  return hasPermission;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -37,9 +55,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { number, capacity, company, project, campId } = await request.json();
+    const { number, capacity, company, project, campId, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
 
     await connectDB();
+    
+    const hasPermission = await checkWritePermission(campId, userEmail);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Bu işlem için yetkiniz yok' }, { status: 403 });
+    }
 
     // Kamp kontrolü
     const camp = await Camp.findById(campId);
@@ -89,17 +116,26 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const { _id, number, capacity, company, project, availableBeds } = await request.json();
+    const { _id, number, capacity, company, project, userEmail } = await request.json();
 
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
+    
     await connectDB();
 
-    // Mevcut odayı bul
+    // Mevcut odayı bul ve kampId'sini al
     const currentRoom = await Room.findById(_id);
     if (!currentRoom) {
       return NextResponse.json(
         { error: 'Oda bulunamadı' },
         { status: 404 }
       );
+    }
+    
+    const hasPermission = await checkWritePermission(currentRoom.campId, userEmail);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Bu işlem için yetkiniz yok' }, { status: 403 });
     }
 
     // Eğer oda numarası değiştiyse, aynı numaralı başka oda var mı kontrol et
@@ -118,6 +154,21 @@ export async function PUT(request: Request) {
       }
     }
 
+    // Kapasite değişikliği varsa, mevcut işçi sayısını kontrol et
+    if (capacity !== currentRoom.capacity) {
+      const currentWorkerCount = await Worker.countDocuments({ roomId: _id });
+      if (capacity < currentWorkerCount) {
+        return NextResponse.json(
+          { error: `Kapasite ${currentWorkerCount} işçiden az olamaz. Odada ${currentWorkerCount} işçi bulunuyor.` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Yeni availableBeds değerini hesapla
+    const currentWorkerCount = await Worker.countDocuments({ roomId: _id });
+    const newAvailableBeds = capacity - currentWorkerCount;
+
     const room = await Room.findByIdAndUpdate(
       _id,
       { 
@@ -125,7 +176,7 @@ export async function PUT(request: Request) {
         capacity, 
         company, 
         project, 
-        availableBeds 
+        availableBeds: newAvailableBeds
       },
       { new: true }
     ).populate('workers');
@@ -142,9 +193,18 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const { _id, campId } = await request.json();
+    const { _id, campId, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
 
     await connectDB();
+
+    const hasPermission = await checkWritePermission(campId, userEmail);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Bu işlem için yetkiniz yok' }, { status: 403 });
+    }
 
     // Odayı bul
     const room = await Room.findById(_id);

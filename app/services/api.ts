@@ -58,29 +58,29 @@ export const getRooms = async (campId: string): Promise<Room[]> => {
   return response.json();
 };
 
-export const createRoom = async (roomData: any) => {
+export const createRoom = async (roomData: any, userEmail: string) => {
   const response = await fetch('/api/rooms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(roomData)
+    body: JSON.stringify({ ...roomData, userEmail })
   });
   return response.json();
 };
 
-export const updateRoom = async (roomData: any) => {
+export const updateRoom = async (roomData: any, userEmail: string) => {
   const response = await fetch('/api/rooms', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(roomData)
+    body: JSON.stringify({ ...roomData, userEmail })
   });
   return response.json();
 };
 
-export const deleteRoom = async (id: string) => {
+export const deleteRoom = async (id: string, campId: string, userEmail: string) => {
   const response = await fetch('/api/rooms', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ _id: id })
+    body: JSON.stringify({ _id: id, campId, userEmail })
   });
   return response.json();
 };
@@ -105,29 +105,29 @@ export const getWorkers = async (campId?: string, roomId?: string): Promise<Work
   return response.json();
 };
 
-export const createWorker = async (workerData: any) => {
+export const createWorker = async (workerData: any, userEmail: string) => {
   const response = await fetch('/api/workers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(workerData)
+    body: JSON.stringify({ ...workerData, userEmail })
   });
   return response.json();
 };
 
-export const updateWorker = async (workerData: any) => {
+export const updateWorker = async (workerData: any, userEmail: string) => {
   const response = await fetch('/api/workers', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(workerData)
+    body: JSON.stringify({ ...workerData, userEmail })
   });
   return response.json();
 };
 
-export const deleteWorker = async (id: string) => {
+export const deleteWorker = async (id: string, userEmail: string) => {
   const response = await fetch('/api/workers', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ _id: id })
+    body: JSON.stringify({ _id: id, userEmail })
   });
   return response.json();
 };
@@ -148,14 +148,14 @@ interface ErrorResponse {
 type ApiResponse<T> = T | ErrorResponse;
 
 // Excel import fonksiyonları
-export const importRooms = async (campId: string, roomsData: any[]): Promise<ApiResponse<ImportResponse>> => {
+export const importRooms = async (campId: string, roomsData: any[], userEmail: string): Promise<ApiResponse<ImportResponse>> => {
   try {
     const response = await fetch(`/api/rooms/import`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ campId, rooms: roomsData }),
+      body: JSON.stringify({ campId, rooms: roomsData, userEmail }),
     });
     
     if (!response.ok) {
@@ -169,14 +169,14 @@ export const importRooms = async (campId: string, roomsData: any[]): Promise<Api
   }
 };
 
-export const importWorkers = async (campId: string, workersData: any[]): Promise<ApiResponse<ImportResponse>> => {
+export const importWorkers = async (campId: string, workersData: any[], userEmail: string): Promise<ApiResponse<ImportResponse>> => {
   try {
     const response = await fetch(`/api/workers/import`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ campId, workers: workersData }),
+      body: JSON.stringify({ campId, workers: workersData, userEmail }),
     });
     
     if (!response.ok) {

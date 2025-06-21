@@ -2,7 +2,22 @@ import { NextResponse } from 'next/server';
 import connectToDatabase from '@/app/lib/mongodb';
 import Worker from '@/app/models/Worker';
 import Room from '@/app/models/Room';
+import Camp from '@/app/models/Camp';
 import { Types } from 'mongoose';
+
+// Yardımcı fonksiyon: Yazma iznini kontrol et
+async function checkWritePermission(userEmail: string, campId: string): Promise<boolean> {
+  const camp = await Camp.findById(campId);
+  if (!camp) return false;
+
+  const isOwner = camp.userEmail === userEmail;
+  const hasWritePermission = camp.sharedWith?.some(
+    (share: { email: string; permission: string }) => 
+      share.email === userEmail && share.permission === 'write'
+  );
+
+  return isOwner || hasWritePermission;
+}
 
 const parseCustomDate = (dateString: string | undefined): string => {
   if (dateString) {
@@ -23,7 +38,16 @@ const parseCustomDate = (dateString: string | undefined): string => {
 
 export async function POST(request: Request) {
   try {
-    const { campId, workers } = await request.json();
+    const { campId, workers, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
+
+    const hasPermission = await checkWritePermission(userEmail, campId);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Yazma izniniz bulunmuyor' }, { status: 403 });
+    }
 
     if (!campId || !workers || !Array.isArray(workers)) {
       return NextResponse.json(
@@ -58,10 +82,25 @@ export async function POST(request: Request) {
           continue;
         }
 
-        // Mevcut işçi kontrolü
+        // Mevcut işçi kontrolü - kullanıcının tüm kamplarında kontrol et
+        // Kullanıcının sahip olduğu kampları bul
+        const userCamps = await Camp.find({
+          $or: [
+            { userEmail: userEmail }, // Kendi oluşturduğu kamplar
+            { 'sharedWith.email': userEmail } // Paylaşıldığı kamplar
+          ]
+        });
+        
+        const userCampIds = userCamps.map(camp => camp._id);
+        
+        // Kullanıcının kamplarındaki odaları bul
+        const userRooms = await Room.find({ campId: { $in: userCampIds } });
+        const userRoomIds = userRooms.map(room => room._id);
+        
+        // Sadece kullanıcının kamplarındaki işçiler arasında sicil numarası kontrolü yap
         const existingWorker = await Worker.findOne({
-          campId: new Types.ObjectId(campId),
-          registrationNumber: workerData['SICIL NO'].toString()
+          registrationNumber: workerData['SICIL NO'].toString(),
+          roomId: { $in: userRoomIds }
         });
 
         if (existingWorker) {

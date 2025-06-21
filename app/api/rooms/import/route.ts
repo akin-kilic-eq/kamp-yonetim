@@ -1,10 +1,34 @@
 import { NextResponse } from 'next/server';
 import connectToDatabase from '@/app/lib/mongodb';
 import Room from '@/app/models/Room';
+import Camp from '@/app/models/Camp';
+
+// Yardımcı fonksiyon: Yazma iznini kontrol et
+async function checkWritePermission(userEmail: string, campId: string): Promise<boolean> {
+  const camp = await Camp.findById(campId);
+  if (!camp) return false;
+
+  const isOwner = camp.userEmail === userEmail;
+  const hasWritePermission = camp.sharedWith?.some(
+    (share: { email: string; permission: string }) => 
+      share.email === userEmail && share.permission === 'write'
+  );
+
+  return isOwner || hasWritePermission;
+}
 
 export async function POST(request: Request) {
   try {
-    const { campId, rooms } = await request.json();
+    const { campId, rooms, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
+
+    const hasPermission = await checkWritePermission(userEmail, campId);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Yazma izniniz bulunmuyor' }, { status: 403 });
+    }
 
     if (!campId || !rooms || !Array.isArray(rooms)) {
       return NextResponse.json(

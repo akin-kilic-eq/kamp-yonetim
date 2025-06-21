@@ -54,6 +54,8 @@ export default function RoomsPage() {
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [hasWriteAccess, setHasWriteAccess] = useState(false);
 
   // Proje seçenekleri (örnek)
   const projectOptions = [
@@ -64,9 +66,26 @@ export default function RoomsPage() {
   // Kullanıcı ve kamp bilgisini al ve odaları yükle
   useEffect(() => {
     const campData = localStorage.getItem('currentCamp');
-    if (campData) {
-      const camp = JSON.parse(campData);
+    const userData = sessionStorage.getItem('currentUser');
+
+    if (userData) {
+      const user = JSON.parse(userData);
+      setCurrentUserEmail(user.email);
+    }
+
+    if (campData && userData) {
+      const camp = JSON.parse(campData) as Camp;
+      const user = JSON.parse(userData);
       setCurrentCamp(camp);
+
+      // Yetki kontrolü
+      const isOwner = camp.userEmail === user.email;
+      const canWrite = camp.sharedWith?.some(
+        (share) => share.email === user.email && share.permission === 'write'
+      ) || false;
+
+      setHasWriteAccess(isOwner || canWrite);
+
       if (camp?._id) {
         loadRooms(camp._id);
       }
@@ -100,14 +119,14 @@ export default function RoomsPage() {
   // Oda ekle
   const handleAddRoom = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newRoom.number || !newRoom.capacity || !newRoom.project || !currentCamp) return;
+    if (!newRoom.number || !newRoom.capacity || !newRoom.project || !currentCamp || !currentUserEmail) return;
     try {
       const response = await createRoom({
         ...newRoom,
         campId: currentCamp._id,
         company: currentCamp.name,
         availableBeds: newRoom.capacity
-      });
+      }, currentUserEmail);
       if ('error' in response && typeof response.error === 'string') {
         setError(response.error);
         return;
@@ -127,7 +146,7 @@ export default function RoomsPage() {
     e.preventDefault();
     e.stopPropagation();
     
-    if (!currentCamp) return;
+    if (!currentCamp || !currentUserEmail) return;
 
     // Odadaki işçi sayısını kontrol et
     const room = rooms.find(r => r._id === roomId);
@@ -142,7 +161,7 @@ export default function RoomsPage() {
     if (!window.confirm(confirmMessage)) return;
 
     try {
-      const response = await deleteRoom(roomId);
+      const response = await deleteRoom(roomId, currentCamp._id, currentUserEmail);
       if ('error' in response && typeof response.error === 'string') {
         setError(response.error);
         return;
@@ -243,11 +262,11 @@ export default function RoomsPage() {
   };
 
   const handleImportConfirm = async () => {
-    if (!currentCamp || !importData.length) return;
+    if (!currentCamp || !importData.length || !currentUserEmail) return;
 
     setIsImporting(true);
     try {
-      const response = await importRooms(currentCamp._id, importData);
+      const response = await importRooms(currentCamp._id, importData, currentUserEmail);
       
       if ('error' in response) {
         setError(response.error);
@@ -270,9 +289,9 @@ export default function RoomsPage() {
 
   // Oda güncelleme
   const handleUpdateRoom = async (roomId: string, updatedData: any) => {
-    if (!currentCamp) return;
+    if (!currentCamp || !currentUserEmail) return;
     try {
-      const res = await updateRoom({ _id: roomId, ...updatedData });
+      const res = await updateRoom({ _id: roomId, ...updatedData }, currentUserEmail);
       if (!res.error) {
         setShowEditRoomModal(false);
         setSelectedRoom(null);
@@ -307,7 +326,7 @@ export default function RoomsPage() {
   };
 
   const handleAddWorker = async (roomId: string) => {
-    if (!currentCamp) return;
+    if (!currentCamp || !currentUserEmail) return;
     if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.entryDate) {
       setError('Lütfen tüm zorunlu alanları doldurun.');
       setShowAddWorkerModal(false);
@@ -319,7 +338,7 @@ export default function RoomsPage() {
         ...newWorker,
         roomId,
         campId: currentCamp._id,
-      });
+      }, currentUserEmail);
       if (!res.error) {
         setShowAddWorkerModal(false);
         setNewWorker({ 
@@ -346,11 +365,11 @@ export default function RoomsPage() {
   };
 
   const handleUpdateWorker = async () => {
-    if (!currentCamp || !editWorkerData._id) {
+    if (!currentCamp || !editWorkerData._id || !currentUserEmail) {
       return;
     }
     try {
-      const res = await updateWorker(editWorkerData);
+      const res = await updateWorker(editWorkerData, currentUserEmail);
       if (!res.error) {
         setShowEditWorkerModal(false);
         setSelectedWorker(null);
@@ -370,10 +389,10 @@ export default function RoomsPage() {
   };
 
   const handleDeleteWorker = async (workerId: string, roomId: string) => {
-    if (!currentCamp) return;
+    if (!currentCamp || !currentUserEmail) return;
     if (!window.confirm('Bu işçiyi silmek istediğinizden emin misiniz?')) return;
     try {
-      const res = await deleteWorker(workerId);
+      const res = await deleteWorker(workerId, currentUserEmail);
       if (!res.error) {
         const campId = currentCamp._id;
         getWorkers(campId, roomId).then((data) => {
@@ -389,7 +408,7 @@ export default function RoomsPage() {
   };
 
   const handleChangeWorkerRoom = async (workerId: string, newRoomId: string) => {
-    if (!currentCamp || !selectedWorker) {
+    if (!currentCamp || !selectedWorker || !currentUserEmail) {
       return;
     }
     
@@ -407,7 +426,7 @@ export default function RoomsPage() {
         _id: workerId,
         roomId: newRoomId,
         campId: currentCamp._id,
-      });
+      }, currentUserEmail);
 
       if (!res.error) {
         setShowChangeRoomModal(false);
@@ -441,20 +460,22 @@ export default function RoomsPage() {
               <h1 className="text-2xl font-bold text-gray-900">{currentCamp ? `${currentCamp.name} Kampı Odaları` : 'Odalar'}</h1>
               <p className="mt-2 text-sm text-gray-600">{currentCamp ? `${currentCamp.name} kampındaki` : 'Kamp içerisindeki'} tüm odaların listesi ve detayları</p>
             </div>
-            <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none space-x-4">
-              <button
-                onClick={() => setShowAddRoomModal(true)}
-                className="inline-flex items-center justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto"
-              >
-                Yeni Oda Ekle
-              </button>
-              <button
-                onClick={() => setShowImportModal(true)}
-                className="inline-flex items-center justify-center rounded-md border border-blue-600 bg-white px-4 py-2 text-sm font-medium text-blue-600 shadow-sm hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto"
-              >
-                Excel'den İçe Aktar
-              </button>
-            </div>
+            {hasWriteAccess && (
+              <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none space-x-4">
+                <button
+                  onClick={() => setShowAddRoomModal(true)}
+                  className="inline-flex items-center justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto"
+                >
+                  Yeni Oda Ekle
+                </button>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  className="inline-flex items-center justify-center rounded-md border border-blue-600 bg-white px-4 py-2 text-sm font-medium text-blue-600 shadow-sm hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto"
+                >
+                  Excel'den İçe Aktar
+                </button>
+              </div>
+            )}
           </div>
         </div>
         {/* Arama çubuğu */}
@@ -494,7 +515,7 @@ export default function RoomsPage() {
                       <th scope="col" className="px-4 py-3 text-left text-sm font-semibold text-gray-900">Kapasite</th>
                       <th scope="col" className="px-4 py-3 text-left text-sm font-semibold text-gray-900">Boş Yatak</th>
                       <th scope="col" className="px-4 py-3 text-left text-sm font-semibold text-gray-900">Doluluk</th>
-                      <th scope="col" className="relative px-4 py-3"><span className="sr-only">İşlemler</span></th>
+                      {hasWriteAccess && <th scope="col" className="relative px-4 py-3"><span className="sr-only">İşlemler</span></th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 bg-white">
@@ -509,27 +530,29 @@ export default function RoomsPage() {
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 cursor-pointer" onClick={() => toggleRoomDetails(room._id)}>{room.capacity}</td>
                           <td className={`px-4 py-4 whitespace-nowrap text-sm ${room.availableBeds > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}`}>{room.availableBeds}</td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{room.capacity - room.availableBeds}</td>
-                          <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-                            <button
-                              onClick={() => {
-                                setSelectedRoom(room);
-                                setShowEditRoomModal(true);
-                              }}
-                              className="text-blue-600 hover:underline mr-4"
-                            >
-                              Düzenle
-                            </button>
-                            <button
-                              onClick={(e) => handleDeleteRoom(e, room._id)}
-                              className="text-red-600 hover:underline"
-                            >
-                              Sil
-                            </button>
-                          </td>
+                          {hasWriteAccess && (
+                            <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
+                              <button
+                                onClick={() => {
+                                  setSelectedRoom(room);
+                                  setShowEditRoomModal(true);
+                                }}
+                                className="text-blue-600 hover:underline mr-4"
+                              >
+                                Düzenle
+                              </button>
+                              <button
+                                onClick={(e) => handleDeleteRoom(e, room._id)}
+                                className="text-red-600 hover:underline"
+                              >
+                                Sil
+                              </button>
+                            </td>
+                          )}
                         </tr>
                         {expandedRoomId === room._id && (
                           <tr>
-                            <td colSpan={6} className="px-4 py-4 bg-gray-50">
+                            <td colSpan={hasWriteAccess ? 6 : 5} className="px-4 py-4 bg-gray-50">
                               <div className="border rounded-lg bg-white">
                                 <table className="min-w-full divide-y divide-gray-200">
                                   <thead className="bg-gray-50">
@@ -538,7 +561,7 @@ export default function RoomsPage() {
                                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sicil No</th>
                                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Şantiye</th>
                                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Giriş Tarihi</th>
-                                      <th scope="col" className="relative px-6 py-3"><span className="sr-only">İşlemler</span></th>
+                                      {hasWriteAccess && <th scope="col" className="relative px-6 py-3"><span className="sr-only">İşlemler</span></th>}
                                     </tr>
                                   </thead>
                                   <tbody className="bg-white divide-y divide-gray-200">
@@ -548,40 +571,43 @@ export default function RoomsPage() {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{worker.registrationNumber}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{worker.project}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{worker.entryDate ? new Date(worker.entryDate).toLocaleDateString('tr-TR') : '-'}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                          <button
-                                            onClick={() => {
-                                              setSelectedWorker(worker);
-                                              setShowEditWorkerModal(true);
-                                            }}
-                                            className="text-blue-600 hover:underline mr-4"
-                                          >Düzenle</button>
-                                          <button
-                                            onClick={() => {
-                                              setSelectedWorker(worker);
-                                              setShowChangeRoomModal(true);
-                                            }}
-                                            className="text-green-600 hover:underline mr-4"
-                                          >Oda Değiştir</button>
-                                          <button
-                                            onClick={async () => {
-                                              await deleteWorker(worker._id);
-                                              setShowEditWorkerModal(false);
-                                              setSelectedWorker(null);
-                                              getWorkers(currentCamp!._id, room._id).then((data) => {
-                                                setRoomWorkers((prev) => ({ ...prev, [room._id]: data }));
-                                              });
-                                              loadRooms(currentCamp!._id);
-                                            }}
-                                            className="text-red-600 hover:underline"
-                                          >Sil</button>
-                                        </td>
+                                        {hasWriteAccess && (
+                                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                            <button
+                                              onClick={() => {
+                                                setSelectedWorker(worker);
+                                                setShowEditWorkerModal(true);
+                                              }}
+                                              className="text-blue-600 hover:underline mr-4"
+                                            >Düzenle</button>
+                                            <button
+                                              onClick={() => {
+                                                setSelectedWorker(worker);
+                                                setShowChangeRoomModal(true);
+                                              }}
+                                              className="text-green-600 hover:underline mr-4"
+                                            >Oda Değiştir</button>
+                                            <button
+                                              onClick={async () => {
+                                                if (!currentUserEmail) return;
+                                                await deleteWorker(worker._id, currentUserEmail);
+                                                setShowEditWorkerModal(false);
+                                                setSelectedWorker(null);
+                                                getWorkers(currentCamp!._id, room._id).then((data) => {
+                                                  setRoomWorkers((prev) => ({ ...prev, [room._id]: data }));
+                                                });
+                                                loadRooms(currentCamp!._id);
+                                              }}
+                                              className="text-red-600 hover:underline"
+                                            >Sil</button>
+                                          </td>
+                                        )}
                                       </tr>
                                     ))}
                                     {/* Boş yataklar için işçi ekle butonu */}
-                                    {Array.from({ length: room.availableBeds }).map((_, index) => (
+                                    {hasWriteAccess && Array.from({ length: room.availableBeds }).map((_, index) => (
                                       <tr key={`empty-${index}`}>
-                                        <td colSpan={5} className="px-6 py-4">
+                                        <td colSpan={hasWriteAccess ? 5 : 4} className="px-6 py-4">
                                           <button
                                             onClick={() => {
                                               setSelectedRoom(room);
@@ -676,6 +702,7 @@ export default function RoomsPage() {
                 const updatedData = {
                   number: (e.currentTarget.elements.namedItem('number') as HTMLInputElement).value,
                   project: (e.currentTarget.elements.namedItem('project') as HTMLSelectElement).value,
+                  capacity: parseInt((e.currentTarget.elements.namedItem('capacity') as HTMLInputElement).value) || 0,
                 };
                 handleUpdateRoom(selectedRoom._id, updatedData);
               }}
@@ -697,7 +724,7 @@ export default function RoomsPage() {
                   id="edit-room-project"
                   name="project"
                   defaultValue={selectedRoom.project}
-                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                   required
                 >
                   <option value="" disabled>Proje Seçin</option>
@@ -705,6 +732,18 @@ export default function RoomsPage() {
                     <option key={option.label} value={option.label}>{option.label}</option>
                   ))}
                 </select>
+              </div>
+              <div className="mb-4">
+                <label htmlFor="edit-room-capacity" className="block text-sm font-medium text-gray-700">Kapasite</label>
+                <input
+                  type="number"
+                  id="edit-room-capacity"
+                  name="capacity"
+                  min="1"
+                  defaultValue={selectedRoom.capacity}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
               </div>
               <div className="flex justify-end space-x-4">
                 <button type="button" onClick={() => setShowEditRoomModal(false)} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">İptal</button>

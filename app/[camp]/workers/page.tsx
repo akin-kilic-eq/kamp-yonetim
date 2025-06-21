@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getRooms, getWorkers, createWorker, updateWorker, deleteWorker, importWorkers } from '@/app/services/api';
-import { Room, Worker } from '../types';
+import { Room, Worker, Camp } from '../types';
 import ImportExcel from '@/components/ImportExcel';
 import PreviewModal from '@/components/PreviewModal';
 
@@ -20,6 +20,8 @@ export default function WorkersPage() {
   const [currentCamp, setCurrentCamp] = useState<{ _id: string; id?: string; name: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [hasWriteAccess, setHasWriteAccess] = useState(false);
   
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
@@ -62,9 +64,26 @@ export default function WorkersPage() {
   // Oturum ve kamp kontrolü ve veri yükleme
   useEffect(() => {
     const campData = localStorage.getItem('currentCamp');
-    if (campData) {
-      const camp = JSON.parse(campData);
+    const userData = sessionStorage.getItem('currentUser');
+
+    if (userData) {
+      const user = JSON.parse(userData);
+      setCurrentUserEmail(user.email);
+    }
+
+    if (campData && userData) {
+      const camp = JSON.parse(campData) as Camp;
+      const user = JSON.parse(userData);
       setCurrentCamp(camp);
+
+      // Yetki kontrolü
+      const isOwner = camp.userEmail === user.email;
+      const canWrite = camp.sharedWith?.some(
+        (share) => share.email === user.email && share.permission === 'write'
+      ) || false;
+
+      setHasWriteAccess(isOwner || canWrite);
+      
       if(camp?._id) {
         loadData(camp._id);
       }
@@ -156,7 +175,7 @@ export default function WorkersPage() {
   // İşçi ekleme
   const handleAddWorker = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.roomId || !currentCamp) {
+    if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.roomId || !currentCamp || !currentUserEmail) {
       setError('Lütfen tüm alanları doldurun');
       setShowAddModal(false);
       setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', roomId: '', entryDate: new Date().toISOString().split('T')[0] });
@@ -181,7 +200,7 @@ export default function WorkersPage() {
         roomId: newWorker.roomId,
         campId: campId,
         entryDate: new Date(newWorker.entryDate).toISOString()
-      });
+      }, currentUserEmail);
 
       if (response.error) {
         setError(response.error);
@@ -210,7 +229,7 @@ export default function WorkersPage() {
   // İşçi güncelleme
   const handleUpdateWorker = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedWorker || !currentCamp) return;
+    if (!selectedWorker || !currentCamp || !currentUserEmail) return;
 
     try {
       setError('');
@@ -229,7 +248,7 @@ export default function WorkersPage() {
         roomId: selectedWorker.roomId,
         campId: campId,
         entryDate: selectedWorker.entryDate
-      });
+      }, currentUserEmail);
       
       if (response.error) {
         setError(response.error);
@@ -246,11 +265,11 @@ export default function WorkersPage() {
 
   // İşçi silme
   const handleDeleteWorker = async () => {
-    if (!selectedWorker?._id) return;
+    if (!selectedWorker?._id || !currentUserEmail) return;
 
     try {
       setError('');
-      const response = await deleteWorker(selectedWorker._id);
+      const response = await deleteWorker(selectedWorker._id, currentUserEmail);
       
       if (response.error) {
         setError(response.error);
@@ -268,7 +287,7 @@ export default function WorkersPage() {
   // Oda değiştirme
   const handleChangeRoom = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedWorker || !newRoomId || !currentCamp) {
+    if (!selectedWorker || !newRoomId || !currentCamp || !currentUserEmail) {
       setError('Lütfen yeni bir oda seçin.');
       return;
     }
@@ -285,7 +304,7 @@ export default function WorkersPage() {
         _id: selectedWorker._id,
         roomId: newRoomId,
         campId: campId
-      });
+      }, currentUserEmail);
 
       if (response.error) {
         setError(response.error);
@@ -334,7 +353,13 @@ export default function WorkersPage() {
         'Odaya Giriş Tarihi': d['Odaya Giriş Tarihi'],
       }));
 
-      const response = await importWorkers(currentCamp._id, workersToImport);
+      if (!currentUserEmail) {
+        setError('Yetkilendirme hatası: Kullanıcı bilgisi bulunamadı.');
+        setIsImporting(false);
+        return;
+      }
+
+      const response = await importWorkers(currentCamp._id, workersToImport, currentUserEmail);
 
       if ('error' in response) {
         console.error('Import API error:', response.error);
@@ -389,26 +414,28 @@ export default function WorkersPage() {
                 {currentCamp ? `${currentCamp.name} kampında toplam` : 'Toplam'} {filteredWorkers.length} işçi
               </p>
             </div>
-            <div className="flex space-x-4">
-              <button
-                onClick={() => setShowImportModal(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                Excel'den İçe Aktar
-              </button>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-                Yeni İşçi Ekle
-              </button>
-            </div>
+            {hasWriteAccess && (
+              <div className="flex space-x-4">
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  Excel'den İçe Aktar
+                </button>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Yeni İşçi Ekle
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Arama */}
@@ -445,13 +472,13 @@ export default function WorkersPage() {
                   <th className="px-4 py-2 cursor-pointer text-left w-1/6" onClick={() => handleSort('entryDate')}>
                     Giriş Tarihi {sortConfig?.key === 'entryDate' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
                   </th>
-                  <th className="px-4 py-2 text-right">İşlemler</th>
+                  {hasWriteAccess && <th className="px-4 py-2 text-right">İşlemler</th>}
                 </tr>
               </thead>
               <tbody>
                 {filteredWorkers.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={hasWriteAccess ? 6 : 5} className="px-4 py-8 text-center text-gray-500">
                       {searchTerm ? 'Arama sonucu bulunamadı' : 'Henüz işçi eklenmemiş'}
                     </td>
                   </tr>
@@ -465,37 +492,39 @@ export default function WorkersPage() {
                       <td className="px-4 py-2 text-left">
                         {new Date(worker.entryDate).toLocaleDateString('tr-TR')}
                       </td>
-                      <td className="px-4 py-2 text-right whitespace-nowrap">
-                        <button
-                          onClick={() => {
-                            setSelectedWorker(worker);
-                            setShowEditModal(true);
-                          }}
-                          className="text-blue-500 hover:text-blue-700 mr-2"
-                        >
-                          Düzenle
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedWorker(worker);
-                            setShowDeleteModal(true);
-                          }}
-                          className="text-red-500 hover:text-red-700"
-                        >
-                          Sil
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedWorker(worker);
-                            setShowChangeRoomModal(true);
-                            setNewRoomId('');
-                          }}
-                          className="text-green-600 hover:text-green-900 ml-4"
-                          title="Odayı Değiştir"
-                        >
-                          Oda Değiştir
-                        </button>
-                      </td>
+                      {hasWriteAccess && (
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => {
+                              setSelectedWorker(worker);
+                              setShowEditModal(true);
+                            }}
+                            className="text-blue-500 hover:text-blue-700 mr-2"
+                          >
+                            Düzenle
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedWorker(worker);
+                              setShowDeleteModal(true);
+                            }}
+                            className="text-red-500 hover:text-red-700"
+                          >
+                            Sil
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedWorker(worker);
+                              setShowChangeRoomModal(true);
+                              setNewRoomId('');
+                            }}
+                            className="text-green-600 hover:text-green-900 ml-4"
+                            title="Odayı Değiştir"
+                          >
+                            Oda Değiştir
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}

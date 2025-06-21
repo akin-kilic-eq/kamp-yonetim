@@ -2,7 +2,23 @@ import { NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongodb';
 import Worker from '@/app/models/Worker';
 import Room from '@/app/models/Room';
+import Camp from '@/app/models/Camp';
 import mongoose from 'mongoose';
+
+// Yetki kontrolü için yardımcı fonksiyon
+async function checkWritePermission(campId: string, userEmail: string): Promise<boolean> {
+  const camp = await Camp.findById(campId);
+  if (!camp) return false;
+
+  if (camp.userEmail === userEmail) {
+    return true;
+  }
+
+  return camp.sharedWith.some(
+    (share: { email: string; permission: string }) =>
+      share.email === userEmail && share.permission === 'write'
+  );
+}
 
 export async function GET(request: Request) {
   try {
@@ -37,9 +53,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { name, surname, registrationNumber, project, roomId, campId } = await request.json();
+    const { name, surname, registrationNumber, project, roomId, campId, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
 
     await connectDB();
+
+    const hasPermission = await checkWritePermission(campId, userEmail);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Bu işlem için yetkiniz yok' }, { status: 403 });
+    }
 
     // Oda kontrolü
     const room = await Room.findById(roomId);
@@ -66,8 +91,27 @@ export async function POST(request: Request) {
       );
     }
 
-    // Kayıt numarası kontrolü
-    const existingWorker = await Worker.findOne({ registrationNumber });
+    // Kayıt numarası kontrolü - sadece kullanıcının kendi kamplarında kontrol et
+    // Kullanıcının sahip olduğu kampları bul
+    const userCamps = await Camp.find({
+      $or: [
+        { userEmail: userEmail }, // Kendi oluşturduğu kamplar
+        { 'sharedWith.email': userEmail } // Paylaşıldığı kamplar
+      ]
+    });
+    
+    const userCampIds = userCamps.map(camp => camp._id);
+    
+    // Kullanıcının kamplarındaki odaları bul
+    const userRooms = await Room.find({ campId: { $in: userCampIds } });
+    const userRoomIds = userRooms.map(room => room._id);
+    
+    // Sadece kullanıcının kamplarındaki işçiler arasında sicil numarası kontrolü yap
+    const existingWorker = await Worker.findOne({
+      registrationNumber,
+      roomId: { $in: userRoomIds }
+    });
+    
     if (existingWorker) {
       return NextResponse.json(
         { error: 'Bu kayıt numarası zaten kullanımda' },
@@ -104,9 +148,18 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const { _id, name, surname, registrationNumber, project, roomId, campId } = await request.json();
+    const { _id, name, surname, registrationNumber, project, roomId, campId, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
 
     await connectDB();
+
+    const hasPermission = await checkWritePermission(campId, userEmail);
+    if (!hasPermission) {
+      return NextResponse.json({ error: 'Bu işlem için yetkiniz yok' }, { status: 403 });
+    }
 
     // Önce mevcut işçiyi bul
     const oldWorker = await Worker.findById(_id);
@@ -159,6 +212,35 @@ export async function PUT(request: Request) {
       });
     }
 
+    // Sicil numarası kontrolü - sadece kullanıcının kendi kamplarında kontrol et (mevcut işçi hariç)
+    // Kullanıcının sahip olduğu kampları bul
+    const userCamps = await Camp.find({
+      $or: [
+        { userEmail: userEmail }, // Kendi oluşturduğu kamplar
+        { 'sharedWith.email': userEmail } // Paylaşıldığı kamplar
+      ]
+    });
+    
+    const userCampIds = userCamps.map(camp => camp._id);
+    
+    // Kullanıcının kamplarındaki odaları bul
+    const userRooms = await Room.find({ campId: { $in: userCampIds } });
+    const userRoomIds = userRooms.map(room => room._id);
+    
+    // Sadece kullanıcının kamplarındaki işçiler arasında sicil numarası kontrolü yap (mevcut işçi hariç)
+    const existingWorker = await Worker.findOne({
+      registrationNumber,
+      roomId: { $in: userRoomIds },
+      _id: { $ne: _id } // Mevcut işçiyi hariç tut
+    });
+    
+    if (existingWorker) {
+      return NextResponse.json(
+        { error: 'Bu kayıt numarası zaten kullanımda' },
+        { status: 400 }
+      );
+    }
+
     // İşçiyi güncelle
     const worker = await Worker.findByIdAndUpdate(
       _id,
@@ -178,7 +260,11 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const { _id } = await request.json();
+    const { _id, userEmail } = await request.json();
+
+    if (!userEmail) {
+      return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
+    }
 
     await connectDB();
 
@@ -189,6 +275,18 @@ export async function DELETE(request: Request) {
         { error: 'İşçi bulunamadı' },
         { status: 404 }
       );
+    }
+    
+    // İşçinin ait olduğu kampı bul ve yetkiyi kontrol et
+    const room = await Room.findById(worker.roomId);
+    if (room) {
+        const hasPermission = await checkWritePermission(room.campId, userEmail);
+        if (!hasPermission) {
+            return NextResponse.json({ error: 'Bu işlem için yetkiniz yok' }, { status: 403 });
+        }
+    } else {
+        // Oda bilgisi olmayan bir işçi silinemez veya yetki kontrolü yapılamaz
+        return NextResponse.json({ error: 'İşçinin oda ataması bulunamadığından silinemedi.'}, { status: 400 });
     }
 
     // İşçiyi sil
