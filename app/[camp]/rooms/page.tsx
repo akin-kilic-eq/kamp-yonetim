@@ -1001,11 +1001,11 @@ export default function RoomsPage() {
       {/* Import Modal */}
       {showImportModal && (
         <div 
-          className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+          className="fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center"
           onClick={() => setShowImportModal(false)}
         >
           <div 
-            className="relative top-20 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white"
+            className="w-4/5 max-w-4xl p-5 border shadow-lg rounded-md bg-white"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mt-3">

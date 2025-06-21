@@ -875,11 +875,11 @@ export default function WorkersPage() {
       {/* Import Modal */}
       {showImportModal && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+          className="fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center"
           onClick={() => setShowImportModal(false)}
         >
           <div 
-            className="bg-white rounded-lg p-6 w-4/5 max-w-4xl"
+            className="w-4/5 max-w-4xl p-6 bg-white rounded-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4">
