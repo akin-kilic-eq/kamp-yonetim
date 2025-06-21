@@ -116,7 +116,6 @@ export default function ReportPage() {
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedRooms, setSelectedRooms] = useState<Room[]>([]);
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [currentCamp, setCurrentCamp] = useState<any>(null);
   const [pieData, setPieData] = useState({
     labels: ['Dolu Yatak', 'Boş Yatak'],
@@ -172,225 +171,174 @@ export default function ReportPage() {
   };
 
   useEffect(() => {
-    // Oturum kontrolü
-    const userSession = sessionStorage.getItem('currentUser');
-    if (!userSession) {
-      router.push('/login');
-      return;
+    const campData = localStorage.getItem('currentCamp');
+    if (campData) {
+      const camp = JSON.parse(campData);
+      setCurrentCamp(camp);
+      if (camp?._id) {
+        loadData(camp._id);
+      }
     }
+  }, []);
 
-    const user = JSON.parse(userSession);
-    setCurrentUser(user);
+  const loadData = async (campId: string) => {
+    try {
+      const roomsData = await getRooms(campId);
+      if (!Array.isArray(roomsData)) return;
+      setRooms(roomsData);
 
-    // Mevcut kampı kontrol et
-    const currentCampData = localStorage.getItem('currentCamp');
-    if (!currentCampData) {
-      router.push('/camps');
-      return;
-    }
+      const workersData = await getWorkers(campId);
+      if (!Array.isArray(workersData)) return;
+      setWorkers(workersData);
 
-    const camp = JSON.parse(currentCampData);
-    
-    // Erişim kontrolü - hem kamp sahibi hem de paylaşılan kullanıcılar erişebilir
-    const hasAccess = camp.userEmail === user.email || (camp.sharedWith || []).includes(user.email);
-    if (!hasAccess) {
-      router.push('/camps');
-      return;
-    }
+      const workerProjectStats: { [key: string]: number } = {
+        'Slava 4': 0,
+        'Slava 2-3': 0
+      };
 
-    setCurrentCamp(camp);
-
-    // Verileri API'den çek
-    const loadData = async () => {
-      try {
-        // Odaları çek
-        const roomsData = await getRooms(camp._id);
-        if (!Array.isArray(roomsData)) return;
-        setRooms(roomsData);
-
-        // İşçileri çek
-        const workersData = await getWorkers(camp._id);
-        if (!Array.isArray(workersData)) return;
-        setWorkers(workersData);
-
-        // Proje bazlı işçi dağılımını hesapla
-        const workerProjectStats: { [key: string]: number } = {
-          'Slava 4': 0,
-          'Slava 2-3': 0
-        };
-
-        // Her işçinin projesine göre sayıları hesapla
-        workersData.forEach((worker: Worker) => {
-          if (worker.project === 'Slava 4') {
-            workerProjectStats['Slava 4']++;
-          } else if (worker.project === 'Slava 2-3') {
-            workerProjectStats['Slava 2-3']++;
-          }
-        });
-
-        // Oda bazlı proje dağılımını hesapla
-        const roomProjectStats: { [key: string]: { rooms: number, capacity: number, workers: number } } = {
-          'Slava 4': { rooms: 0, capacity: 0, workers: 0 },
-          'Slava 2-3': { rooms: 0, capacity: 0, workers: 0 }
-        };
-
-        // Her odanın projesine göre istatistikleri hesapla
-        roomsData.forEach((room: Room) => {
-          if (room.project) {
-            roomProjectStats[room.project].rooms += 1;
-            roomProjectStats[room.project].capacity += room.capacity;
-            // Odadaki dolu yatak sayısını hesapla
-            const roomWorkers = workersData.filter((worker: Worker) => {
-              if (typeof worker.roomId === 'string') {
-                return worker.roomId === room._id;
-              }
-              const roomIdObj = worker.roomId as { _id: string };
-              return roomIdObj._id === room._id;
-            });
-            roomProjectStats[room.project].workers += roomWorkers.length;
-          }
-        });
-
-        // Proje dağılımını hesapla
-        const projectDistribution: Stats['projectDistribution'] = {
-          'Slava 4': {
-            rooms: roomProjectStats['Slava 4'].rooms,
-            workers: roomProjectStats['Slava 4'].workers,
-            occupancyRate: roomProjectStats['Slava 4'].capacity > 0 ? 
-              (roomProjectStats['Slava 4'].workers / roomProjectStats['Slava 4'].capacity) * 100 : 0
-          },
-          'Slava 2-3': {
-            rooms: roomProjectStats['Slava 2-3'].rooms,
-            workers: roomProjectStats['Slava 2-3'].workers,
-            occupancyRate: roomProjectStats['Slava 2-3'].capacity > 0 ? 
-              (roomProjectStats['Slava 2-3'].workers / roomProjectStats['Slava 2-3'].capacity) * 100 : 0
-          }
-        };
-
-        // Genel istatistikleri hesapla
-        const totalRooms = roomsData.length;
-        const totalCapacity = roomsData.reduce((sum: number, room: Room) => sum + room.capacity, 0);
-        const occupiedBeds = workersData.length; // Toplam işçi sayısı
-        const availableBeds = totalCapacity - occupiedBeds;
-        const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
-
-        // Grafik verilerini güncelle
-        updateChartData(workerProjectStats, totalCapacity, occupiedBeds);
-
-        // Her oda için farklı projede çalışan işçileri hesapla
-        type ProjectType = 'Slava 4' | 'Slava 2-3';
-        type ProjectStats = {
-          totalInRooms: number;
-          sameProject: number;
-        };
-        
-        const projectWorkerStats: Record<ProjectType, ProjectStats> = {
-          'Slava 4': {
-            totalInRooms: 0,
-            sameProject: 0
-          },
-          'Slava 2-3': {
-            totalInRooms: 0,
-            sameProject: 0
-          }
-        };
-
-        // Her oda için işçileri kontrol et
-        roomsData.forEach((room: Room) => {
-          if (room.project && (room.project === 'Slava 4' || room.project === 'Slava 2-3')) {
-            const roomWorkers = workersData.filter((worker: Worker) => {
-              if (typeof worker.roomId === 'string') {
-                return worker.roomId === room._id;
-              }
-              const roomIdObj = worker.roomId as { _id: string };
-              return roomIdObj._id === room._id;
-            });
-
-            roomWorkers.forEach((worker: Worker) => {
-              projectWorkerStats[room.project as ProjectType].totalInRooms++;
-              if (worker.project === room.project) {
-                projectWorkerStats[room.project as ProjectType].sameProject++;
-              }
-            });
-          }
-        });
-
-        // En dolu ve en boş odaları bul
-        let mostOccupiedRoom = '';
-        let leastOccupiedRoom = '';
-        let maxOccupancyRate = -1;
-        let minOccupancyRate = Number.MAX_VALUE;
-
-        roomsData.forEach((room: Room) => {
+      workersData.forEach((worker: Worker) => {
+        if (worker.project === 'Slava 4') {
+          workerProjectStats['Slava 4']++;
+        } else if (worker.project === 'Slava 2-3') {
+          workerProjectStats['Slava 2-3']++;
+        }
+      });
+      
+      const roomProjectStats: { [key: string]: { rooms: number, capacity: number, workers: number } } = {
+        'Slava 4': { rooms: 0, capacity: 0, workers: 0 },
+        'Slava 2-3': { rooms: 0, capacity: 0, workers: 0 }
+      };
+      
+      roomsData.forEach((room: Room) => {
+        if (room.project && roomProjectStats[room.project]) {
+          roomProjectStats[room.project].rooms += 1;
+          roomProjectStats[room.project].capacity += room.capacity;
           const roomWorkers = workersData.filter((worker: Worker) => {
-            if (typeof worker.roomId === 'string') {
-              return worker.roomId === room._id;
-            }
-            const roomIdObj = worker.roomId as { _id: string };
-            return roomIdObj._id === room._id;
+            const workerRoomId = typeof worker.roomId === 'object' ? worker.roomId?._id : worker.roomId;
+            return workerRoomId === room._id;
+          });
+          roomProjectStats[room.project].workers += roomWorkers.length;
+        }
+      });
+
+      const projectDistribution: Stats['projectDistribution'] = {
+        'Slava 4': {
+          rooms: roomProjectStats['Slava 4'].rooms,
+          workers: roomProjectStats['Slava 4'].workers,
+          occupancyRate: roomProjectStats['Slava 4'].capacity > 0 ?
+            (roomProjectStats['Slava 4'].workers / roomProjectStats['Slava 4'].capacity) * 100 : 0
+        },
+        'Slava 2-3': {
+          rooms: roomProjectStats['Slava 2-3'].rooms,
+          workers: roomProjectStats['Slava 2-3'].workers,
+          occupancyRate: roomProjectStats['Slava 2-3'].capacity > 0 ?
+            (roomProjectStats['Slava 2-3'].workers / roomProjectStats['Slava 2-3'].capacity) * 100 : 0
+        }
+      };
+
+      const totalRooms = roomsData.length;
+      const totalCapacity = roomsData.reduce((sum: number, room: Room) => sum + room.capacity, 0);
+      const occupiedBeds = workersData.length;
+      const availableBeds = totalCapacity - occupiedBeds;
+      const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
+
+      updateChartData(workerProjectStats, totalCapacity, occupiedBeds);
+
+      type ProjectType = 'Slava 4' | 'Slava 2-3';
+      type ProjectStats = {
+        totalInRooms: number;
+        sameProject: number;
+      };
+      
+      const projectWorkerStats: Record<ProjectType, ProjectStats> = {
+        'Slava 4': { totalInRooms: 0, sameProject: 0 },
+        'Slava 2-3': { totalInRooms: 0, sameProject: 0 }
+      };
+
+      roomsData.forEach((room: Room) => {
+        if (room.project && (room.project === 'Slava 4' || room.project === 'Slava 2-3')) {
+          const roomWorkers = workersData.filter((worker: Worker) => {
+            const workerRoomId = typeof worker.roomId === 'object' ? worker.roomId?._id : worker.roomId;
+            return workerRoomId === room._id;
           });
 
-          const occupancy = roomWorkers.length;
-          const occupancyRate = (occupancy / room.capacity) * 100;
-          
-          if (occupancyRate > maxOccupancyRate) {
-            maxOccupancyRate = occupancyRate;
-            mostOccupiedRoom = `Oda ${room.number} (${occupancy}/${room.capacity})`;
-          }
-          
-          if (occupancyRate < minOccupancyRate) {
-            minOccupancyRate = occupancyRate;
-            leastOccupiedRoom = `Oda ${room.number} (${occupancy}/${room.capacity})`;
-          }
-        });
-
-        // Son 7 gün içinde giriş yapan işçileri hesapla
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        
-        const recentWorkers = workersData.filter((worker: Worker) => {
-          if (!worker.entryDate) return false;
-          const entryDate = new Date(worker.entryDate);
-          return entryDate >= sevenDaysAgo;
-        }).length;
-
-        setStats({
-          totalRooms,
-          totalCapacity,
-          occupiedBeds,
-          availableBeds,
-          totalWorkers: occupiedBeds,
-          occupancyRate,
-          slava4Rooms: roomProjectStats['Slava 4'].rooms,
-          slava23Rooms: roomProjectStats['Slava 2-3'].rooms,
-          slava4Workers: workerProjectStats['Slava 4'],
-          slava23Workers: workerProjectStats['Slava 2-3'],
-          averageOccupancyPerRoom: totalRooms > 0 ? occupiedBeds / totalRooms : 0,
-          mostOccupiedRoom,
-          leastOccupiedRoom,
-          recentWorkers,
-          projectDistribution,
-          crossProjectStats: {
-            'Slava 4': {
-              totalWorkers: projectWorkerStats['Slava 4'].totalInRooms,
-              sameProjectWorkers: projectWorkerStats['Slava 4'].sameProject,
-              otherProjectWorkers: projectWorkerStats['Slava 4'].totalInRooms - projectWorkerStats['Slava 4'].sameProject
-            },
-            'Slava 2-3': {
-              totalWorkers: projectWorkerStats['Slava 2-3'].totalInRooms,
-              sameProjectWorkers: projectWorkerStats['Slava 2-3'].sameProject,
-              otherProjectWorkers: projectWorkerStats['Slava 2-3'].totalInRooms - projectWorkerStats['Slava 2-3'].sameProject
+          roomWorkers.forEach((worker: Worker) => {
+            projectWorkerStats[room.project as ProjectType].totalInRooms++;
+            if (worker.project === room.project) {
+              projectWorkerStats[room.project as ProjectType].sameProject++;
             }
-          }
+          });
+        }
+      });
+
+      let mostOccupiedRoom = '';
+      let leastOccupiedRoom = '';
+      let maxOccupancyRate = -1;
+      let minOccupancyRate = Number.MAX_VALUE;
+
+      roomsData.forEach((room: Room) => {
+        const roomWorkers = workersData.filter((worker: Worker) => {
+          const workerRoomId = typeof worker.roomId === 'object' ? worker.roomId?._id : worker.roomId;
+          return workerRoomId === room._id;
         });
 
-      } catch (error) {
-        console.error('Veriler yüklenirken hata:', error);
-      }
-    };
+        const occupancy = roomWorkers.length;
+        const occupancyRate = room.capacity > 0 ? (occupancy / room.capacity) * 100 : 0;
+        
+        if (occupancyRate > maxOccupancyRate) {
+          maxOccupancyRate = occupancyRate;
+          mostOccupiedRoom = `Oda ${room.number} (${occupancy}/${room.capacity})`;
+        }
+        
+        if (occupancyRate < minOccupancyRate) {
+          minOccupancyRate = occupancyRate;
+          leastOccupiedRoom = `Oda ${room.number} (${occupancy}/${room.capacity})`;
+        }
+      });
 
-    loadData();
-  }, [router]);
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const recentWorkers = workersData.filter((worker: Worker) => {
+        if (!worker.entryDate) return false;
+        const entryDate = new Date(worker.entryDate);
+        return entryDate >= sevenDaysAgo;
+      }).length;
+
+      setStats({
+        totalRooms,
+        totalCapacity,
+        occupiedBeds,
+        availableBeds,
+        totalWorkers: occupiedBeds,
+        occupancyRate,
+        slava4Rooms: roomProjectStats['Slava 4'].rooms,
+        slava23Rooms: roomProjectStats['Slava 2-3'].rooms,
+        slava4Workers: workerProjectStats['Slava 4'],
+        slava23Workers: workerProjectStats['Slava 2-3'],
+        averageOccupancyPerRoom: totalRooms > 0 ? occupiedBeds / totalRooms : 0,
+        mostOccupiedRoom,
+        leastOccupiedRoom,
+        recentWorkers,
+        projectDistribution,
+        crossProjectStats: {
+          'Slava 4': {
+            totalWorkers: projectWorkerStats['Slava 4'].totalInRooms,
+            sameProjectWorkers: projectWorkerStats['Slava 4'].sameProject,
+            otherProjectWorkers: projectWorkerStats['Slava 4'].totalInRooms - projectWorkerStats['Slava 4'].sameProject
+          },
+          'Slava 2-3': {
+            totalWorkers: projectWorkerStats['Slava 2-3'].totalInRooms,
+            sameProjectWorkers: projectWorkerStats['Slava 2-3'].sameProject,
+            otherProjectWorkers: projectWorkerStats['Slava 2-3'].totalInRooms - projectWorkerStats['Slava 2-3'].sameProject
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Veriler yüklenirken hata:', error);
+    }
+  };
 
   const handleProjectClick = (project: string) => {
     const projectRooms = rooms.filter(room => room.project === project);
@@ -444,7 +392,7 @@ export default function ReportPage() {
 
     const campName = currentCamp.name.replace(/\\s+/g, '_');
     const today = new Date();
-    const formattedDate = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
+    const formattedDate = `${today.getDate().toString().padStart(2, '0')}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getFullYear()}`;
     const fileName = `${campName}_${formattedDate}.xlsx`;
 
     const headerCellStyle: CellStyle = {
@@ -1005,20 +953,16 @@ export default function ReportPage() {
 
       {/* Oda Detayları Modalı */}
       {showRoomModal && selectedProject && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-white rounded-lg p-8 max-w-4xl w-full max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-2xl font-bold text-gray-900">{selectedProject} Odaları</h3>
-              <button
-                onClick={() => setShowRoomModal(false)}
-                className="text-gray-400 hover:text-gray-500"
-              >
-                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="overflow-x-auto">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center"
+          onClick={() => setShowRoomModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl p-8 max-w-4xl w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-2xl font-bold mb-4">{selectedProject} Projesindeki Odalar</h2>
+            <div className="max-h-96 overflow-y-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>

@@ -1,8 +1,20 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
+
+interface Camp {
+  _id: string;
+  name: string;
+  description: string;
+  userEmail: string;
+  sharedWith: { email: string; permission: 'read' | 'write' }[];
+}
+
+interface User {
+  email: string;
+}
 
 export default function CampLayout({
   children,
@@ -11,9 +23,40 @@ export default function CampLayout({
 }) {
   const router = useRouter();
   const params = useParams();
+  const [campName, setCampName] = useState<string>('Kamp Yönetimi');
+
+  useEffect(() => {
+    const userSession = sessionStorage.getItem('currentUser');
+    const campSession = localStorage.getItem('currentCamp');
+
+    if (!userSession || !campSession) {
+      router.push('/login');
+      return;
+    }
+
+    try {
+      const currentUser: User = JSON.parse(userSession);
+      const currentCamp: Camp = JSON.parse(campSession);
+
+      setCampName(currentCamp.name);
+
+      const isOwner = currentCamp.userEmail === currentUser.email;
+      const isSharedWith = currentCamp.sharedWith?.some(member => member.email === currentUser.email);
+
+      if (!isOwner && !isSharedWith) {
+        // Eğer kullanıcı ne sahip ne de paylaşılan kişi ise, kamplar sayfasına yönlendir
+        router.push('/camps');
+      }
+    } catch (error) {
+      console.error("Oturum verileri okunurken hata oluştu:", error);
+      router.push('/login');
+    }
+
+  }, [router, params.camp]);
 
   const handleLogout = () => {
-    localStorage.removeItem('selectedCampId');
+    sessionStorage.removeItem('currentUser');
+    localStorage.removeItem('currentCamp');
     router.push('/login');
   };
 

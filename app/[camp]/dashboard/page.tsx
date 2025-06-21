@@ -15,16 +15,14 @@ interface Stats {
 }
 
 interface Camp {
-  id: string;
+  _id: string;
   name: string;
   userEmail: string;
-  sharedWith?: string[];
+  sharedWith?: { email: string; permission: 'read' | 'write' }[];
 }
 
 export default function CampDashboard({ params }: { params: { camp: string } }) {
   const router = useRouter();
-  const [campName, setCampName] = useState('');
-  const [campDescription, setCampDescription] = useState('');
   const [stats, setStats] = useState<Stats>({
     totalRooms: 0,
     totalCapacity: 0,
@@ -33,69 +31,41 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
     totalWorkers: 0,
     occupancyRate: 0
   });
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
 
   useEffect(() => {
-    // Oturum kontrolü
-    const userSession = sessionStorage.getItem('currentUser');
-    if (!userSession) {
-      router.push('/login');
-      return;
+    const campDataFromStorage = localStorage.getItem('currentCamp');
+    if (campDataFromStorage) {
+      const camp: Camp = JSON.parse(campDataFromStorage);
+      setCurrentCamp(camp);
+      loadStats(camp._id);
     }
+  }, []);
 
-    const user = JSON.parse(userSession);
-    setCurrentUser(user);
+  const loadStats = async (campId: string) => {
+    try {
+      const rooms = await getRooms(campId);
+      if (!Array.isArray(rooms)) return;
 
-    // Mevcut kampı kontrol et
-    const currentCampData = localStorage.getItem('currentCamp');
-    if (!currentCampData) {
-      router.push('/camps');
-      return;
+      const totalRooms = rooms.length;
+      const totalCapacity = rooms.reduce((sum, room) => sum + room.capacity, 0);
+      const occupiedBeds = rooms.reduce((sum, room) => sum + (room.capacity - room.availableBeds), 0);
+      const availableBeds = rooms.reduce((sum, room) => sum + room.availableBeds, 0);
+      const totalWorkers = occupiedBeds;
+      const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
+
+      setStats({
+        totalRooms,
+        totalCapacity,
+        occupiedBeds,
+        availableBeds,
+        totalWorkers,
+        occupancyRate
+      });
+    } catch (error) {
+      console.error('İstatistikler yüklenirken hata:', error);
     }
-
-    const camp = JSON.parse(currentCampData);
-    
-    // Erişim kontrolü - hem kamp sahibi hem de paylaşılan kullanıcılar erişebilir
-    const hasAccess = camp.userEmail === user.email || (camp.sharedWith || []).includes(user.email);
-    if (!hasAccess) {
-      router.push('/camps');
-      return;
-    }
-
-    setCurrentCamp(camp);
-    
-    // MongoDB'den oda ve işçi verilerini çek
-    const loadStats = async () => {
-      try {
-        // Odaları çek
-        const rooms = await getRooms(camp._id);
-        if (!Array.isArray(rooms)) return;
-
-        // İstatistikleri hesapla
-        const totalRooms = rooms.length;
-        const totalCapacity = rooms.reduce((sum, room) => sum + room.capacity, 0);
-        const occupiedBeds = rooms.reduce((sum, room) => sum + (room.capacity - room.availableBeds), 0);
-        const availableBeds = rooms.reduce((sum, room) => sum + room.availableBeds, 0);
-        const totalWorkers = occupiedBeds; // Dolu yatak sayısı = toplam işçi sayısı
-        const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
-
-        // Stats state'ini güncelle
-        setStats({
-          totalRooms,
-          totalCapacity,
-          occupiedBeds,
-          availableBeds,
-          totalWorkers,
-          occupancyRate
-        });
-      } catch (error) {
-        console.error('İstatistikler yüklenirken hata:', error);
-      }
-    };
-
-    loadStats();
-  }, [router]);
+  };
 
   const handleLogout = () => {
     sessionStorage.removeItem('currentUser');

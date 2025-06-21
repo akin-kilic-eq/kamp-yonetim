@@ -15,8 +15,13 @@ const CampSchema = new mongoose.Schema({
     required: [true, 'Kullanıcı emaili zorunludur']
   },
   sharedWith: [{
-    type: String
+    email: { type: String, required: true },
+    permission: { type: String, enum: ['read', 'write'], required: true }
   }],
+  shareCodes: {
+    read: { type: String, unique: true, sparse: true },
+    write: { type: String, unique: true, sparse: true }
+  },
   rooms: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Room'

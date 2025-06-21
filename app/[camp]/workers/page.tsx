@@ -18,7 +18,6 @@ export default function WorkersPage() {
   const [workers, setWorkers] = useState<WorkerWithRoom[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [currentCamp, setCurrentCamp] = useState<{ _id: string; id?: string; name: string } | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   
@@ -31,6 +30,7 @@ export default function WorkersPage() {
   
   // Form states
   const [selectedWorker, setSelectedWorker] = useState<WorkerWithRoom | null>(null);
+  const [newRoomId, setNewRoomId] = useState<string>('');
   const [newWorker, setNewWorker] = useState({
     name: '',
     surname: '',
@@ -59,40 +59,49 @@ export default function WorkersPage() {
     { label: 'Slava 2-3', value: 'Slava 2-3' }
   ];
 
-  // Verileri yükle
-  const loadData = async () => {
-    if (!currentCamp?._id) return;
+  // Oturum ve kamp kontrolü ve veri yükleme
+  useEffect(() => {
+    const campData = localStorage.getItem('currentCamp');
+    if (campData) {
+      const camp = JSON.parse(campData);
+      setCurrentCamp(camp);
+      if(camp?._id) {
+        loadData(camp._id);
+      }
+    }
+  }, []);
 
+  // Verileri yükle
+  const loadData = async (campId: string) => {
     try {
       setLoading(true);
       setError('');
 
       // Odaları çek
-      const roomsData = await getRooms(currentCamp._id);
+      const roomsData = await getRooms(campId);
       if (Array.isArray(roomsData)) {
         setRooms(roomsData);
+      } else {
+        setRooms([]); // Hata durumunda veya veri yoksa boş dizi ata
       }
 
       // İşçileri çek
-      const workersData = await getWorkers(currentCamp._id);
+      const workersData = await getWorkers(campId);
       if (Array.isArray(workersData)) {
-        // İşçilere oda bilgilerini ekle
         const workersWithRoomInfo = workersData.map(worker => {
           let roomNumber = '-';
           if (typeof worker.roomId === 'object' && worker.roomId !== null) {
             roomNumber = worker.roomId.number;
           } else if (typeof worker.roomId === 'string') {
-            const room = roomsData.find((r: Room) => r._id === worker.roomId);
+            const allRooms = Array.isArray(roomsData) ? roomsData : [];
+            const room = allRooms.find((r: Room) => r._id === worker.roomId);
             roomNumber = room?.number || '-';
           }
-          
-          return {
-            ...worker,
-            roomNumber
-          };
+          return { ...worker, roomNumber };
         });
         setWorkers(workersWithRoomInfo);
-        setFilteredWorkers(workersWithRoomInfo);
+      } else {
+        setWorkers([]); // Hata durumunda veya veri yoksa boş dizi ata
       }
     } catch (error) {
       console.error('Veriler yüklenirken hata:', error);
@@ -101,38 +110,6 @@ export default function WorkersPage() {
       setLoading(false);
     }
   };
-
-  // Oturum ve kamp kontrolü
-  useEffect(() => {
-    const userSession = sessionStorage.getItem('currentUser');
-    if (!userSession) {
-      router.push('/login');
-      return;
-    }
-
-    const user = JSON.parse(userSession);
-    setCurrentUser(user);
-
-    const campData = localStorage.getItem('currentCamp');
-    if (!campData) {
-      router.push('/camps');
-      return;
-    }
-
-    const camp = JSON.parse(campData);
-    if (!camp._id && camp.id) {
-      camp._id = camp.id;
-    }
-    
-    setCurrentCamp(camp);
-  }, [router]);
-
-  // Verileri yükle
-  useEffect(() => {
-    if (currentCamp?._id) {
-      loadData();
-    }
-  }, [currentCamp]);
 
   // Arama fonksiyonu
   useEffect(() => {
@@ -181,6 +158,8 @@ export default function WorkersPage() {
     e.preventDefault();
     if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.roomId || !currentCamp) {
       setError('Lütfen tüm alanları doldurun');
+      setShowAddModal(false);
+      setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', roomId: '', entryDate: new Date().toISOString().split('T')[0] });
       return;
     }
 
@@ -189,6 +168,8 @@ export default function WorkersPage() {
       const campId = currentCamp._id || currentCamp.id;
       if (!campId) {
         setError('Kamp bilgisi bulunamadı');
+        setShowAddModal(false);
+        setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', roomId: '', entryDate: new Date().toISOString().split('T')[0] });
         return;
       }
 
@@ -204,10 +185,12 @@ export default function WorkersPage() {
 
       if (response.error) {
         setError(response.error);
+        setShowAddModal(false);
+        setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', roomId: '', entryDate: new Date().toISOString().split('T')[0] });
         return;
       }
 
-      await loadData();
+      await loadData(campId);
       setShowAddModal(false);
       setNewWorker({
         name: '',
@@ -219,6 +202,8 @@ export default function WorkersPage() {
       });
     } catch (error) {
       setError('İşçi eklenirken bir hata oluştu');
+      setShowAddModal(false);
+      setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', roomId: '', entryDate: new Date().toISOString().split('T')[0] });
     }
   };
 
@@ -251,7 +236,7 @@ export default function WorkersPage() {
         return;
       }
 
-      await loadData();
+      await loadData(campId);
       setShowEditModal(false);
       setSelectedWorker(null);
     } catch (error) {
@@ -272,7 +257,7 @@ export default function WorkersPage() {
         return;
       }
 
-      await loadData();
+      await loadData(currentCamp!._id);
       setShowDeleteModal(false);
       setSelectedWorker(null);
     } catch (error) {
@@ -283,7 +268,10 @@ export default function WorkersPage() {
   // Oda değiştirme
   const handleChangeRoom = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedWorker || !currentCamp) return;
+    if (!selectedWorker || !newRoomId || !currentCamp) {
+      setError('Lütfen yeni bir oda seçin.');
+      return;
+    }
 
     try {
       setError('');
@@ -295,23 +283,20 @@ export default function WorkersPage() {
 
       const response = await updateWorker({
         _id: selectedWorker._id,
-        name: selectedWorker.name,
-        surname: selectedWorker.surname,
-        registrationNumber: selectedWorker.registrationNumber,
-        project: selectedWorker.project,
-        roomId: selectedWorker.roomId,
-        campId: campId,
-        entryDate: selectedWorker.entryDate
+        roomId: newRoomId,
+        campId: campId
       });
-      
+
       if (response.error) {
         setError(response.error);
         return;
       }
-
-      await loadData();
+      
+      await loadData(campId);
       setShowChangeRoomModal(false);
       setSelectedWorker(null);
+      setNewRoomId('');
+
     } catch (error) {
       setError('Oda değiştirilirken bir hata oluştu');
     }
@@ -371,7 +356,7 @@ export default function WorkersPage() {
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Verileri yeniden yükle
-      await loadData();
+      await loadData(currentCamp!._id);
 
     } catch (error) {
       console.error('Import error:', error);
@@ -397,8 +382,12 @@ export default function WorkersPage() {
           {/* Başlık ve Butonlar */}
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">İşçi Listesi</h1>
-              <p className="text-gray-600">Toplam {filteredWorkers.length} işçi</p>
+              <h1 className="text-2xl font-bold text-gray-900">
+                {currentCamp ? `${currentCamp.name} Kampı İşçi Listesi` : 'İşçi Listesi'}
+              </h1>
+              <p className="text-gray-600">
+                {currentCamp ? `${currentCamp.name} kampında toplam` : 'Toplam'} {filteredWorkers.length} işçi
+              </p>
             </div>
             <div className="flex space-x-4">
               <button
@@ -442,21 +431,18 @@ export default function WorkersPage() {
 
           {/* İşçiler tablosu */}
           <div className="overflow-x-auto">
-            <table className="min-w-full bg-white border">
+            <table className="min-w-full bg-white border table-fixed">
               <thead>
                 <tr className="bg-gray-100">
-                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('name')}>
-                    İsim {sortConfig?.key === 'name' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
+                  <th className="px-4 py-2 cursor-pointer text-left w-1/3" onClick={() => handleSort('name')}>
+                    Ad Soyad {sortConfig?.key === 'name' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
                   </th>
-                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('surname')}>
-                    Soyisim {sortConfig?.key === 'surname' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
-                  </th>
-                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('registrationNumber')}>
+                  <th className="px-4 py-2 cursor-pointer text-left w-1/6" onClick={() => handleSort('registrationNumber')}>
                     Sicil No {sortConfig?.key === 'registrationNumber' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
                   </th>
-                  <th className="px-4 py-2 text-left">Proje</th>
-                  <th className="px-4 py-2 text-left">Oda No</th>
-                  <th className="px-4 py-2 cursor-pointer text-left" onClick={() => handleSort('entryDate')}>
+                  <th className="px-4 py-2 text-left w-1/6">Proje</th>
+                  <th className="px-4 py-2 text-left w-[10%]">Oda No</th>
+                  <th className="px-4 py-2 cursor-pointer text-left w-1/6" onClick={() => handleSort('entryDate')}>
                     Giriş Tarihi {sortConfig?.key === 'entryDate' && (sortConfig.direction === 'ascending' ? '↑' : '↓')}
                   </th>
                   <th className="px-4 py-2 text-right">İşlemler</th>
@@ -465,22 +451,21 @@ export default function WorkersPage() {
               <tbody>
                 {filteredWorkers.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                       {searchTerm ? 'Arama sonucu bulunamadı' : 'Henüz işçi eklenmemiş'}
                     </td>
                   </tr>
                 ) : (
                   filteredWorkers.map((worker) => (
                     <tr key={worker._id} className="border-t hover:bg-gray-50">
-                      <td className="px-4 py-2 text-left">{worker.name}</td>
-                      <td className="px-4 py-2 text-left">{worker.surname}</td>
+                      <td className="px-4 py-2 text-left truncate">{worker.name} {worker.surname}</td>
                       <td className="px-4 py-2 text-left">{worker.registrationNumber}</td>
                       <td className="px-4 py-2 text-left">{worker.project}</td>
                       <td className="px-4 py-2 text-left">{worker.roomNumber}</td>
                       <td className="px-4 py-2 text-left">
                         {new Date(worker.entryDate).toLocaleDateString('tr-TR')}
                       </td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
                         <button
                           onClick={() => {
                             setSelectedWorker(worker);
@@ -503,8 +488,10 @@ export default function WorkersPage() {
                           onClick={() => {
                             setSelectedWorker(worker);
                             setShowChangeRoomModal(true);
+                            setNewRoomId('');
                           }}
-                          className="text-green-500 hover:text-green-700 ml-2"
+                          className="text-green-600 hover:text-green-900 ml-4"
+                          title="Odayı Değiştir"
                         >
                           Oda Değiştir
                         </button>
@@ -521,8 +508,14 @@ export default function WorkersPage() {
       {/* Modalları ana container'ın dışına taşıyorum */}
       {/* Yeni İşçi Ekleme Modalı */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div 
+          className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50"
+          onClick={() => setShowAddModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h2 className="text-xl font-bold mb-4">Yeni İşçi Ekle</h2>
             <form onSubmit={handleAddWorker}>
               <div className="mb-4">
@@ -742,74 +735,88 @@ export default function WorkersPage() {
 
       {/* Oda Değiştirme Modalı */}
       {showChangeRoomModal && selectedWorker && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Oda Değiştir</h2>
-            <p className="text-sm text-gray-600 mb-2">
-              {selectedWorker.name} {selectedWorker.surname} isimli işçinin;
-            </p>
-            <div className="bg-gray-50 p-3 rounded-md mb-4">
-              <p className="text-sm font-medium text-gray-700">
-                Mevcut Odası: {typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId.number : rooms.find(room => room._id === selectedWorker.roomId)?.number || '-'}
-              </p>
-            </div>
-            <div className="mb-4">
-              <label htmlFor="newRoom" className="block text-sm font-medium text-gray-700 mb-2">
-                Yeni Oda Seç
-              </label>
-              <select
-                id="newRoom"
-                value={typeof selectedWorker.roomId === 'string' ? selectedWorker.roomId : selectedWorker.roomId._id}
-                onChange={(e) => setSelectedWorker({ ...selectedWorker, roomId: e.target.value })}
-                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="">Oda Seçin</option>
-                {rooms
-                  .filter(room => {
-                    const currentRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
-                    const isCurrentRoom = room._id === currentRoomId;
-                    const hasAvailableBeds = room.availableBeds > 0;
-                    return !isCurrentRoom && hasAvailableBeds;
-                  })
-                  .map(room => (
-                    <option key={room._id} value={room._id}>
-                      Oda {room.number} ({room.availableBeds} Boş Yatak)
-                    </option>
-                  ))}
-              </select>
-              {rooms.filter(room => {
-                const currentRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
-                return room._id !== currentRoomId && room.availableBeds > 0;
-              }).length === 0 && (
-                <p className="mt-2 text-sm text-red-600">
-                  Şu anda boş yatak bulunan oda bulunmamaktadır.
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center"
+          onClick={() => setShowChangeRoomModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Oda Değiştir</h2>
+            {selectedWorker && (
+              <form onSubmit={handleChangeRoom}>
+                <p className="mb-4 text-gray-600">
+                  <span className="font-semibold text-gray-700">{selectedWorker.name} {selectedWorker.surname}</span> isimli işçinin odasını değiştiriyorsunuz.
                 </p>
-              )}
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowChangeRoomModal(false)}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800"
-              >
-                İptal
-              </button>
-              <button
-                onClick={handleChangeRoom}
-                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-              >
-                Değiştir
-              </button>
-            </div>
+                <div className="mb-4">
+                  <label htmlFor="currentRoom" className="block text-sm font-medium text-gray-700 mb-1">Mevcut Oda</label>
+                  <input
+                    type="text"
+                    id="currentRoom"
+                    disabled
+                    value={
+                      rooms.find(room => {
+                        const workerRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId?._id : selectedWorker.roomId;
+                        return room._id === workerRoomId;
+                      })?.number || 'Oda Atanmamış'
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-100 cursor-not-allowed"
+                  />
+                </div>
+                <div className="mb-6">
+                  <label htmlFor="newRoom" className="block text-sm font-medium text-gray-700 mb-1">Yeni Oda Seç</label>
+                  <select
+                    id="newRoom"
+                    value={newRoomId}
+                    onChange={(e) => setNewRoomId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">Oda Seçin</option>
+                    {rooms
+                      .filter(room => {
+                        const workerRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId?._id : selectedWorker.roomId;
+                        // Mevcut odayı ve dolu odaları filtrele
+                        return room._id !== workerRoomId && room.capacity > room.workers.length;
+                      })
+                      .map(room => (
+                        <option key={room._id} value={room._id}>
+                          Oda {room.number} (Boş Yatak: {room.capacity - room.workers.length})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="flex justify-end space-x-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowChangeRoomModal(false)}
+                    className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                  >
+                    Değiştir
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
 
       {/* Import Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+          onClick={() => setShowImportModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Excel'den İçe Aktar</h2>
               <button

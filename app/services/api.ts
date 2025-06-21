@@ -35,7 +35,7 @@ export const createCamp = async (campData: any) => {
 };
 
 export const updateCamp = async (campData: any) => {
-  const response = await fetch('/api/camps', {
+  const response = await fetch(`/api/camps`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(campData)
@@ -43,11 +43,11 @@ export const updateCamp = async (campData: any) => {
   return response.json();
 };
 
-export const deleteCamp = async (id: string) => {
-  const response = await fetch('/api/camps', {
+export const deleteCamp = async (campId: string) => {
+  const response = await fetch(`/api/camps`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id })
+    body: JSON.stringify({ id: campId })
   });
   return response.json();
 };
@@ -188,4 +188,34 @@ export const importWorkers = async (campId: string, workersData: any[]): Promise
   } catch (error: any) {
     return { error: error.message };
   }
+};
+
+export const generateShareCodes = async (campId: string) => {
+  const response = await fetch(`/api/camps/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ campId })
+  });
+  if (!response.ok) {
+    throw new Error('Network response was not ok');
+  }
+  return response.json();
+};
+
+export const joinCamp = async (code: string, userEmail: string) => {
+  const response = await fetch(`/api/camps/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, userEmail })
+  });
+  return response.json();
+};
+
+export const leaveCamp = async (campId: string, userEmail: string) => {
+  const response = await fetch(`/api/camps/leave`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ campId, userEmail })
+  });
+  return response.json();
 }; 

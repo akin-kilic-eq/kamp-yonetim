@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const query = {
       $or: [
         { userEmail },
-        { sharedWith: userEmail }
+        { "sharedWith.email": userEmail }
       ]
     };
 
@@ -51,15 +51,19 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const { id, name, description, sharedWith } = await request.json();
+    const { _id, name, description, sharedWith } = await request.json();
 
     await connectDB();
 
     const camp = await Camp.findByIdAndUpdate(
-      id,
+      _id,
       { name, description, sharedWith },
       { new: true }
     );
+
+    if (!camp) {
+      return NextResponse.json({ error: 'Kamp bulunamadı' }, { status: 404 });
+    }
 
     return NextResponse.json(camp);
   } catch (error) {

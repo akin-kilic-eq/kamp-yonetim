@@ -27,20 +27,21 @@ export default function RoomsPage() {
     surname: '',
     registrationNumber: '',
     project: '',
-    entryDate: ''
+    entryDate: new Date().toISOString().split('T')[0]
   });
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
-  const [editWorker, setEditWorker] = useState({
+  const [editWorkerData, setEditWorkerData] = useState({
+    _id: '',
     name: '',
     surname: '',
     registrationNumber: '',
-    project: ''
+    project: '',
+    roomId: '',
+    campId: ''
   });
   const [rooms, setRooms] = useState<Room[]>([]);
   const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
-  const [currentUser, setCurrentUser] = useState<{ email: string; camps: string[] } | null>(null);
   const [error, setError] = useState('');
-  const [showError, setShowError] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
@@ -60,50 +61,35 @@ export default function RoomsPage() {
     { company: 'Slava', project: '2-3', label: 'Slava 2-3' }
   ];
 
-  // Kullanıcı ve kamp bilgisini al
+  // Kullanıcı ve kamp bilgisini al ve odaları yükle
   useEffect(() => {
-    const userSession = sessionStorage.getItem('currentUser');
-    if (!userSession) {
-      router.push('/login');
-      return;
-    }
-    setCurrentUser(JSON.parse(userSession));
-
     const campData = localStorage.getItem('currentCamp');
-    if (!campData) {
-      router.push('/camps');
-      return;
+    if (campData) {
+      const camp = JSON.parse(campData);
+      setCurrentCamp(camp);
+      if (camp?._id) {
+        loadRooms(camp._id);
+      }
     }
-    let camp = JSON.parse(campData);
-    if (!camp._id && camp.id) {
-      camp._id = camp.id;
-    }
-    setCurrentCamp(camp);
-  }, [router]);
+  }, []);
 
-  // MongoDB'den odaları çek
-  useEffect(() => {
-    if (currentUser && currentCamp) {
-      loadRooms();
-    }
-  }, [currentUser, currentCamp]);
-
-  const loadRooms = async () => {
-    if (!currentCamp || !currentCamp._id) {
-      setError('Kamp bilgisi bulunamadı');
-      return;
-    }
+  const loadRooms = async (campId: string) => {
     try {
       setLoading(true);
       setError('');
 
       // Odaları çek
-      const response = await getRooms(currentCamp._id);
+      const response = await getRooms(campId);
       if ('error' in response && typeof response.error === 'string') {
         setError(response.error);
         return;
       }
-      setRooms(response);
+      // Gelen odaları numaralarına göre sırala
+      const sortedRooms = response.sort((a, b) => {
+        // 'number' alanının sayısal olarak karşılaştırılması
+        return a.number.localeCompare(b.number, undefined, { numeric: true });
+      });
+      setRooms(sortedRooms);
     } catch (error) {
       setError('Odalar yüklenirken bir hata oluştu');
     } finally {
@@ -126,7 +112,9 @@ export default function RoomsPage() {
         setError(response.error);
         return;
       }
-      setRooms([...rooms, response]);
+      const updatedRooms = [...rooms, response];
+      updatedRooms.sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+      setRooms(updatedRooms);
       setShowAddRoomModal(false);
       setNewRoom({ number: '', capacity: 1, project: '' });
     } catch (error) {
@@ -230,6 +218,25 @@ export default function RoomsPage() {
     }
   }, [showEditWorkerModal, selectedWorker]);
 
+  // İşçi düzenleme modalı açıldığında formu doldur
+  useEffect(() => {
+    if (showEditWorkerModal && selectedWorker) {
+       const roomId = typeof selectedWorker.roomId === 'object' && selectedWorker.roomId !== null 
+        ? selectedWorker.roomId._id 
+        : selectedWorker.roomId as string;
+
+      setEditWorkerData({
+        _id: selectedWorker._id,
+        name: selectedWorker.name,
+        surname: selectedWorker.surname,
+        registrationNumber: selectedWorker.registrationNumber,
+        project: selectedWorker.project,
+        roomId: roomId,
+        campId: currentCamp?._id || ''
+      });
+    }
+  }, [showEditWorkerModal, selectedWorker, currentCamp]);
+
   const handleImportPreview = (data: any[]) => {
     setImportData(data);
     setShowImportModal(true);
@@ -251,7 +258,7 @@ export default function RoomsPage() {
         }
         setShowImportModal(false);
         setImportData([]);
-        loadRooms();
+        if (currentCamp) loadRooms(currentCamp._id);
       }
     } catch (error: any) {
       setError(error.message || 'İçe aktarma sırasında bir hata oluştu');
@@ -263,22 +270,17 @@ export default function RoomsPage() {
 
   // Oda güncelleme
   const handleUpdateRoom = async (roomId: string, updatedData: any) => {
+    if (!currentCamp) return;
     try {
-      const response = await updateRoom({
-        _id: roomId,
-        ...updatedData
-      });
-      if ('error' in response && typeof response.error === 'string') {
-        setError(response.error);
-        return;
+      const res = await updateRoom({ _id: roomId, ...updatedData });
+      if (!res.error) {
+        setShowEditRoomModal(false);
+        setSelectedRoom(null);
+        if (currentCamp) loadRooms(currentCamp._id);
+      } else {
+        setError(res.error);
       }
-      setRooms(prevRooms =>
-        prevRooms.map(room =>
-          room._id === roomId ? { ...room, ...response } : room
-        )
-      );
-      setError('Oda başarıyla güncellendi');
-    } catch (error) {
+    } catch (err) {
       setError('Oda güncellenirken bir hata oluştu');
     }
   };
@@ -293,7 +295,7 @@ export default function RoomsPage() {
     setExpandedRoomId(roomId);
     
     try {
-      const response = await getWorkers(currentCamp?._id, roomId);
+      const response = await getWorkers(currentCamp!._id, roomId);
       if ('error' in response && typeof response.error === 'string') {
         setError(response.error);
         return;
@@ -304,21 +306,140 @@ export default function RoomsPage() {
     }
   };
 
+  const handleAddWorker = async (roomId: string) => {
+    if (!currentCamp) return;
+    if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.entryDate) {
+      setError('Lütfen tüm zorunlu alanları doldurun.');
+      setShowAddWorkerModal(false);
+      setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: new Date().toISOString().split('T')[0] });
+      return;
+    }
+    try {
+      const res = await createWorker({
+        ...newWorker,
+        roomId,
+        campId: currentCamp._id,
+      });
+      if (!res.error) {
+        setShowAddWorkerModal(false);
+        setNewWorker({ 
+          name: '', 
+          surname: '', 
+          registrationNumber: '', 
+          project: '', 
+          entryDate: new Date().toISOString().split('T')[0] 
+        });
+        getWorkers(currentCamp._id, roomId).then((data) => {
+          if(Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
+        });
+        if (currentCamp) loadRooms(currentCamp._id);
+      } else {
+        setError(res.error);
+        setShowAddWorkerModal(false);
+        setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: new Date().toISOString().split('T')[0] });
+      }
+    } catch (err) {
+      setError('İşçi eklenirken bir hata oluştu.');
+      setShowAddWorkerModal(false);
+      setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: new Date().toISOString().split('T')[0] });
+    }
+  };
+
+  const handleUpdateWorker = async () => {
+    if (!currentCamp || !editWorkerData._id) {
+      return;
+    }
+    try {
+      const res = await updateWorker(editWorkerData);
+      if (!res.error) {
+        setShowEditWorkerModal(false);
+        setSelectedWorker(null);
+        const roomId = typeof res.roomId === 'object' ? res.roomId._id : res.roomId;
+        if (roomId) {
+            getWorkers(currentCamp._id, roomId).then((data) => {
+              if (Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
+            });
+        }
+        loadRooms(currentCamp._id);
+      } else {
+        setError(res.error);
+      }
+    } catch (err) {
+      setError('İşçi güncellenirken bir hata oluştu.');
+    }
+  };
+
+  const handleDeleteWorker = async (workerId: string, roomId: string) => {
+    if (!currentCamp) return;
+    if (!window.confirm('Bu işçiyi silmek istediğinizden emin misiniz?')) return;
+    try {
+      const res = await deleteWorker(workerId);
+      if (!res.error) {
+        const campId = currentCamp._id;
+        getWorkers(campId, roomId).then((data) => {
+          if(Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
+        });
+        loadRooms(campId);
+      } else {
+        setError(res.error);
+      }
+    } catch (err) {
+      setError('İşçi silinirken bir hata oluştu.');
+    }
+  };
+
+  const handleChangeWorkerRoom = async (workerId: string, newRoomId: string) => {
+    if (!currentCamp || !selectedWorker) {
+      return;
+    }
+    
+    const oldRoomId = typeof selectedWorker.roomId === 'object' 
+      ? selectedWorker.roomId._id 
+      : selectedWorker.roomId;
+      
+    if (!oldRoomId) {
+        setError("İşçinin mevcut oda bilgisi bulunamadı.");
+        return;
+    }
+
+    try {
+      const res = await updateWorker({
+        _id: workerId,
+        roomId: newRoomId,
+        campId: currentCamp._id,
+      });
+
+      if (!res.error) {
+        setShowChangeRoomModal(false);
+        setSelectedWorker(null);
+
+        // Eski ve yeni odaların işçi listelerini güncelle
+        const campId = currentCamp!._id;
+        getWorkers(campId, oldRoomId).then((data) => {
+          if (Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [oldRoomId]: data }));
+        });
+        getWorkers(campId, newRoomId).then((data) => {
+          if (Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [newRoomId]: data }));
+        });
+        // Genel oda listesini de güncelle (doluluk oranları için)
+        loadRooms(campId);
+        
+      } else {
+        setError(res.error);
+      }
+    } catch (err) {
+      setError('İşçi odası değiştirilirken hata oluştu.');
+    }
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Hata Mesajı */}
-      {showError && (
-        <div className="fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50" role="alert">
-          <span className="block sm:inline">{error}</span>
-        </div>
-      )}
-
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
           <div className="sm:flex sm:items-center">
             <div className="sm:flex-auto">
-              <h1 className="text-2xl font-bold text-gray-900">Odalar</h1>
-              <p className="mt-2 text-sm text-gray-600">Kamp içerisindeki tüm odaların listesi ve detayları</p>
+              <h1 className="text-2xl font-bold text-gray-900">{currentCamp ? `${currentCamp.name} Kampı Odaları` : 'Odalar'}</h1>
+              <p className="mt-2 text-sm text-gray-600">{currentCamp ? `${currentCamp.name} kampındaki` : 'Kamp içerisindeki'} tüm odaların listesi ve detayları</p>
             </div>
             <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none space-x-4">
               <button
@@ -353,6 +474,14 @@ export default function RoomsPage() {
             </div>
           </div>
         </div>
+
+        {/* Hata Mesajı */}
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+            <span className="block sm:inline">{error}</span>
+          </div>
+        )}
+
         <div className="mt-8 flex flex-col">
           <div className="-my-2 -mx-4 overflow-x-auto sm:-mx-6 lg:-mx-8">
             <div className="inline-block min-w-full py-2 align-middle md:px-6 lg:px-8">
@@ -439,10 +568,10 @@ export default function RoomsPage() {
                                               await deleteWorker(worker._id);
                                               setShowEditWorkerModal(false);
                                               setSelectedWorker(null);
-                                              getWorkers(currentCamp?._id, room._id).then((data) => {
+                                              getWorkers(currentCamp!._id, room._id).then((data) => {
                                                 setRoomWorkers((prev) => ({ ...prev, [room._id]: data }));
                                               });
-                                              loadRooms();
+                                              loadRooms(currentCamp!._id);
                                             }}
                                             className="text-red-600 hover:underline"
                                           >Sil</button>
@@ -483,453 +612,325 @@ export default function RoomsPage() {
 
       {/* Yeni Oda Ekleme Modalı */}
       {showAddRoomModal && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Yeni Oda Ekle</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="roomNumber" className="block text-sm font-medium text-gray-700">
-                  Oda Numarası
-                </label>
+        <div className="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 shadow-xl w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-4">Yeni Oda Ekle</h2>
+            <form onSubmit={handleAddRoom}>
+              <div className="mb-4">
+                <label htmlFor="room-number" className="block text-sm font-medium text-gray-700">Oda Numarası</label>
                 <input
                   type="text"
-                  id="roomNumber"
+                  id="room-number"
+                  name="number"
                   value={newRoom.number}
                   onChange={(e) => setNewRoom({ ...newRoom, number: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="project" className="block text-sm font-medium text-gray-700">
-                  Şantiye
-                </label>
+              <div className="mb-4">
+                <label htmlFor="room-project" className="block text-sm font-medium text-gray-700">Şantiye</label>
                 <select
-                  id="project"
+                  id="room-project"
+                  name="project"
                   value={newRoom.project}
                   onChange={(e) => setNewRoom({ ...newRoom, project: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  required
                 >
-                  <option value="">Seçiniz</option>
-                  <option value="Slava 4">Slava 4</option>
-                  <option value="Slava 2-3">Slava 2-3</option>
+                  <option value="" disabled>Proje Seçin</option>
+                  {projectOptions.map(option => (
+                    <option key={option.label} value={option.label}>{option.label}</option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="capacity" className="block text-sm font-medium text-gray-700">
-                  Kapasite
-                </label>
+              <div className="mb-4">
+                <label htmlFor="room-capacity" className="block text-sm font-medium text-gray-700">Kapasite</label>
                 <input
                   type="number"
-                  id="capacity"
+                  id="room-capacity"
                   min="1"
                   value={newRoom.capacity}
                   onChange={(e) => setNewRoom({ ...newRoom, capacity: parseInt(e.target.value) || 0 })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
                 />
               </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowAddRoomModal(false);
-                  setNewRoom({ number: '', capacity: 1, project: '' });
-                }}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                İptal
-              </button>
-              <button
-                onClick={handleAddRoom}
-                className="rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                Ekle
-              </button>
-            </div>
+              <div className="flex justify-end space-x-4">
+                <button type="button" onClick={() => setShowAddRoomModal(false)} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">İptal</button>
+                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Ekle</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
       {/* Oda Düzenleme Modalı */}
       {showEditRoomModal && selectedRoom && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Oda Düzenle</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="edit-number" className="block text-sm font-medium text-gray-700">Oda Numarası</label>
+        <div className="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 shadow-xl w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-4">Odayı Düzenle</h2>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const updatedData = {
+                  number: (e.currentTarget.elements.namedItem('number') as HTMLInputElement).value,
+                  project: (e.currentTarget.elements.namedItem('project') as HTMLSelectElement).value,
+                };
+                handleUpdateRoom(selectedRoom._id, updatedData);
+              }}
+            >
+              <div className="mb-4">
+                <label htmlFor="edit-room-number" className="block text-sm font-medium text-gray-700">Oda Numarası</label>
                 <input
                   type="text"
-                  id="edit-number"
-                  value={selectedRoom.number}
-                  onChange={(e) => setSelectedRoom({ ...selectedRoom, number: e.target.value })}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  id="edit-room-number"
+                  name="number"
+                  defaultValue={selectedRoom.number}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="edit-capacity" className="block text-sm font-medium text-gray-700">Kapasite</label>
-                <input
-                  type="number"
-                  id="edit-capacity"
-                  value={selectedRoom.capacity}
-                  onChange={(e) => setSelectedRoom({ ...selectedRoom, capacity: parseInt(e.target.value) })}
-                  min="1"
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                />
-              </div>
-              <div>
-                <label htmlFor="edit-project" className="block text-sm font-medium text-gray-700">Şantiye</label>
+              <div className="mb-4">
+                <label htmlFor="edit-room-project" className="block text-sm font-medium text-gray-700">Proje</label>
                 <select
-                  id="edit-project"
-                  value={selectedRoom.project}
-                  onChange={(e) => setSelectedRoom({ ...selectedRoom, project: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  id="edit-room-project"
+                  name="project"
+                  defaultValue={selectedRoom.project}
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  required
                 >
-                  <option value="">Seçiniz</option>
-                  <option value="Slava 4">Slava 4</option>
-                  <option value="Slava 2-3">Slava 2-3</option>
+                  <option value="" disabled>Proje Seçin</option>
+                  {projectOptions.map(option => (
+                    <option key={option.label} value={option.label}>{option.label}</option>
+                  ))}
                 </select>
               </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowEditRoomModal(false);
-                  setSelectedRoom(null);
-                }}
-                className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                İptal
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!selectedRoom) return;
-                  const res = await updateRoom({
-                    _id: selectedRoom._id,
-                    number: selectedRoom.number,
-                    capacity: selectedRoom.capacity,
-                    project: selectedRoom.project,
-                    company: currentCamp?.name || '',
-                    availableBeds: selectedRoom.availableBeds,
-                  });
-                  if (!res.error) {
-                    setShowEditRoomModal(false);
-                    setSelectedRoom(null);
-                    loadRooms();
-                  } else {
-                    setError(res.error);
-                  }
-                }}
-                className="bg-blue-600 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                Kaydet
-              </button>
-            </div>
+              <div className="flex justify-end space-x-4">
+                <button type="button" onClick={() => setShowEditRoomModal(false)} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">İptal</button>
+                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Güncelle</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
       {/* İşçi Ekleme Modalı */}
       {showAddWorkerModal && selectedRoom && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Yeni İşçi Ekle</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="workerFullName" className="block text-sm font-medium text-gray-700">Adı Soyadı</label>
+        <div 
+          className="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50"
+          onClick={() => {
+            setShowAddWorkerModal(false);
+            setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: new Date().toISOString().split('T')[0] });
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg p-8 shadow-xl w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-2xl font-bold mb-4">{selectedRoom.number} Odasına İşçi Ekle</h2>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddWorker(selectedRoom._id);
+              }}
+            >
+              <div className="mb-4">
+                <label htmlFor="worker-name" className="block text-sm font-medium text-gray-700">İsim</label>
                 <input
                   type="text"
-                  id="workerFullName"
+                  id="worker-name"
                   value={newWorker.name}
                   onChange={(e) => setNewWorker({ ...newWorker, name: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="registrationNumber" className="block text-sm font-medium text-gray-700">Sicil No</label>
+              <div className="mb-4">
+                <label htmlFor="worker-surname" className="block text-sm font-medium text-gray-700">Soyisim</label>
                 <input
                   type="text"
-                  id="registrationNumber"
+                  id="worker-surname"
+                  value={newWorker.surname}
+                  onChange={(e) => setNewWorker({ ...newWorker, surname: e.target.value })}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label htmlFor="worker-registration" className="block text-sm font-medium text-gray-700">Sicil No</label>
+                <input
+                  type="text"
+                  id="worker-registration"
                   value={newWorker.registrationNumber}
                   onChange={(e) => setNewWorker({ ...newWorker, registrationNumber: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
-              <div>
-                <label htmlFor="workerProject" className="block text-sm font-medium text-gray-700">Şantiye</label>
+              <div className="mb-4">
+                <label htmlFor="worker-project" className="block text-sm font-medium text-gray-700">Şantiye</label>
                 <select
-                  id="workerProject"
+                  id="worker-project"
+                  name="project"
                   value={newWorker.project}
                   onChange={(e) => setNewWorker({ ...newWorker, project: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  required
                 >
-                  <option value="">Seçiniz</option>
-                  <option value="Slava 4">Slava 4</option>
-                  <option value="Slava 2-3">Slava 2-3</option>
+                  <option value="" disabled>Proje Seçin</option>
+                  {projectOptions.map(option => (
+                    <option key={option.label} value={option.label}>{option.label}</option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="entryDate" className="block text-sm font-medium text-gray-700">Odaya Giriş Tarihi</label>
+              <div className="mb-4">
+                <label htmlFor="worker-entry" className="block text-sm font-medium text-gray-700">Giriş Tarihi</label>
                 <input
                   type="date"
-                  id="entryDate"
-                  value={newWorker.entryDate || new Date().toISOString().split('T')[0]}
+                  id="worker-entry"
+                  value={newWorker.entryDate}
                   onChange={(e) => setNewWorker({ ...newWorker, entryDate: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowAddWorkerModal(false);
-                  setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: '' });
-                  setSelectedRoom(null);
-                }}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                İptal
-              </button>
-              <button
-                onClick={async () => {
-                  if (!selectedRoom) return;
-                  // Adı Soyadı'nı ayır
-                  const [name, ...surnameArr] = (newWorker.name || '').trim().split(' ');
-                  const surname = surnameArr.join(' ');
-                  if (!name || !newWorker.registrationNumber || !newWorker.project) {
-                    alert('Lütfen tüm alanları doldurun');
-                    return;
-                  }
-                  const res = await createWorker({
-                    name,
-                    surname,
-                    registrationNumber: newWorker.registrationNumber,
-                    project: newWorker.project,
-                    roomId: selectedRoom._id,
-                    campId: currentCamp?._id,
-                    entryDate: newWorker.entryDate || new Date().toISOString().split('T')[0]
-                  });
-                  if (!res.error) {
-                    setShowAddWorkerModal(false);
-                    setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: '' });
-                    // İşçi listesini anında güncelle
-                    const roomId = selectedRoom._id;
-                    getWorkers(currentCamp?._id, roomId).then((data) => {
-                      setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
-                    });
-                    loadRooms();
-                  } else {
-                    alert(res.error);
-                  }
-                }}
-                className="rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                Ekle
-              </button>
-            </div>
+              <div className="flex justify-end space-x-4">
+                <button type="button" onClick={() => setShowAddWorkerModal(false)} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">İptal</button>
+                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Ekle</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
       {/* İşçi Düzenleme Modalı */}
       {showEditWorkerModal && selectedWorker && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">İşçi Düzenle</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="editWorkerFullName" className="block text-sm font-medium text-gray-700">Adı Soyadı</label>
+        <div className="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 shadow-xl w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-4">İşçi Düzenle</h2>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleUpdateWorker();
+              }}
+            >
+              <div className="mb-4">
+                <label htmlFor="edit-worker-name" className="block text-sm font-medium text-gray-700">İsim</label>
                 <input
                   type="text"
-                  id="editWorkerFullName"
-                  value={editFullName}
-                  onChange={(e) => setEditFullName(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  id="edit-worker-name"
+                  name="name"
+                  value={editWorkerData.name}
+                  onChange={(e) => setEditWorkerData({ ...editWorkerData, name: e.target.value })}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="editRegistrationNumber" className="block text-sm font-medium text-gray-700">Sicil No</label>
+              <div className="mb-4">
+                <label htmlFor="edit-worker-surname" className="block text-sm font-medium text-gray-700">Soyisim</label>
                 <input
                   type="text"
-                  id="editRegistrationNumber"
-                  value={selectedWorker.registrationNumber}
-                  onChange={(e) => setSelectedWorker({ ...selectedWorker, registrationNumber: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  id="edit-worker-surname"
+                  name="surname"
+                  value={editWorkerData.surname}
+                  onChange={(e) => setEditWorkerData({ ...editWorkerData, surname: e.target.value })}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
                 />
               </div>
-              <div>
-                <label htmlFor="editWorkerProject" className="block text-sm font-medium text-gray-700">Şantiye</label>
+              <div className="mb-4">
+                <label htmlFor="edit-worker-registration" className="block text-sm font-medium text-gray-700">Sicil No</label>
+                <input
+                  type="text"
+                  id="edit-worker-registration"
+                  name="registrationNumber"
+                  value={editWorkerData.registrationNumber}
+                  onChange={(e) => setEditWorkerData({ ...editWorkerData, registrationNumber: e.target.value })}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label htmlFor="edit-worker-project" className="block text-sm font-medium text-gray-700">Şantiye</label>
                 <select
-                  id="editWorkerProject"
-                  value={selectedWorker.project}
-                  onChange={(e) => setSelectedWorker({ ...selectedWorker, project: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  id="edit-worker-project"
+                  name="project"
+                  value={editWorkerData.project}
+                  onChange={(e) => setEditWorkerData({ ...editWorkerData, project: e.target.value })}
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  required
                 >
-                  <option value="">Seçiniz</option>
-                  <option value="Slava 4">Slava 4</option>
-                  <option value="Slava 2-3">Slava 2-3</option>
+                  <option value="" disabled>Şantiye Seçin</option>
+                  {projectOptions.map(option => (
+                    <option key={option.label} value={option.label}>{option.label}</option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="editEntryDate" className="block text-sm font-medium text-gray-700">Odaya Giriş Tarihi</label>
-                <input
-                  type="date"
-                  id="editEntryDate"
-                  value={selectedWorker.entryDate ? selectedWorker.entryDate.split('T')[0] : ''}
-                  onChange={(e) => setSelectedWorker({ ...selectedWorker, entryDate: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                />
+              <div className="flex justify-end space-x-4">
+                <button type="button" onClick={() => setShowEditWorkerModal(false)} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">İptal</button>
+                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Güncelle</button>
               </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowEditWorkerModal(false);
-                  setSelectedWorker(null);
-                }}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                İptal
-              </button>
-              <button
-                onClick={async () => {
-                  if (!selectedWorker) return;
-                  const [name, ...surnameArr] = editFullName.trim().split(' ');
-                  const surname = surnameArr.join(' ');
-                  const res = await updateWorker({
-                    _id: selectedWorker._id,
-                    name,
-                    surname,
-                    registrationNumber: selectedWorker.registrationNumber,
-                    project: selectedWorker.project,
-                    roomId: selectedRoom?._id || selectedWorker.roomId,
-                    campId: currentCamp?._id,
-                  });
-                  if (!res.error) {
-                    setShowEditWorkerModal(false);
-                    setSelectedWorker(null);
-                    const roomId = selectedRoom?._id || (typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId);
-                    getWorkers(currentCamp?._id, roomId).then((data) => {
-                      setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
-                    });
-                    loadRooms();
-                  } else {
-                    alert(res.error);
-                  }
-                }}
-                className="rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                Kaydet
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
 
       {/* Oda Değiştirme Modalı */}
       {showChangeRoomModal && selectedWorker && (
-        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Oda Değiştir</h3>
-            <p className="text-sm text-gray-600 mb-2">
-              {selectedWorker.name} {selectedWorker.surname} isimli işçinin;
-            </p>
-            <div className="bg-gray-50 p-3 rounded-md mb-4">
-              <p className="text-sm font-medium text-gray-700">
-                Mevcut Odası: {typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId.number : rooms.find(room => room._id === selectedWorker.roomId)?.number || '-'}
-              </p>
-            </div>
-            <div className="mb-4">
-              <label htmlFor="newRoom" className="block text-sm font-medium text-gray-700 mb-2">
-                Yeni Oda Seç
-              </label>
-              <select
-                id="newRoom"
-                value={selectedRoom ? selectedRoom._id : ''}
-                onChange={(e) => {
-                  const room = rooms.find(r => r._id === e.target.value);
-                  setSelectedRoom(room || null);
-                }}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-              >
-                <option value="">Oda Seçin</option>
-                {rooms
-                  .filter(room => {
-                    const currentRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
-                    const isCurrentRoom = room._id === currentRoomId;
-                    const hasAvailableBeds = room.availableBeds > 0;
-                    return !isCurrentRoom && hasAvailableBeds;
-                  })
-                  .map(room => (
-                    <option key={room._id} value={room._id}>
-                      Oda {room.number} ({room.availableBeds} Boş Yatak)
-                    </option>
-                  ))}
-              </select>
-              {rooms.filter(room => {
-                const currentRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
-                return room._id !== currentRoomId && room.availableBeds > 0;
-              }).length === 0 && (
-                <p className="mt-2 text-sm text-red-600">
-                  Şu anda boş yatak bulunan oda bulunmamaktadır.
-                </p>
-              )}
-            </div>
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowChangeRoomModal(false);
-                  setSelectedRoom(null);
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                İptal
-              </button>
-              <button
-                onClick={async () => {
-                  if (!selectedWorker || !selectedRoom) return;
-                  const oldRoomId = typeof selectedWorker.roomId === 'object' ? selectedWorker.roomId._id : selectedWorker.roomId;
-                  const newRoomId = selectedRoom._id;
-                  const res = await updateWorker({
-                    _id: selectedWorker._id,
-                    name: selectedWorker.name,
-                    surname: selectedWorker.surname,
-                    registrationNumber: selectedWorker.registrationNumber,
-                    project: selectedWorker.project,
-                    roomId: newRoomId,
-                    campId: currentCamp?._id,
-                  });
-                  if (!res.error) {
-                    setShowChangeRoomModal(false);
-                    setSelectedRoom(null);
-                    setSelectedWorker(null);
-                    // Eski ve yeni odaların işçi listelerini güncelle
-                    getWorkers(currentCamp?._id, oldRoomId).then((data) => {
-                      setRoomWorkers((prev) => ({ ...prev, [oldRoomId]: data }));
-                    });
-                    getWorkers(currentCamp?._id, newRoomId).then((data) => {
-                      setRoomWorkers((prev) => ({ ...prev, [newRoomId]: data }));
-                    });
-                    loadRooms();
-                  } else {
-                    alert(res.error);
-                  }
-                }}
-                disabled={!selectedRoom}
-                className={`px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md ${selectedRoom ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
-              >
-                Değiştir
-              </button>
-            </div>
+        <div className="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 shadow-xl w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-4">İşçinin Odasını Değiştir</h2>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const newRoomId = (e.currentTarget.elements.namedItem('new-room-id') as HTMLSelectElement).value;
+                handleChangeWorkerRoom(selectedWorker._id, newRoomId);
+              }}
+            >
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  İşçi: {selectedWorker.name} {selectedWorker.surname}
+                </label>
+                <label htmlFor="new-room-select" className="block text-sm font-medium text-gray-700">Yeni Oda</label>
+                <select
+                  id="new-room-select"
+                  name="new-room-id"
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  required
+                >
+                  <option value="" disabled>Oda Seçin</option>
+                  {rooms
+                    .filter(room => {
+                      const workerRoomId = typeof selectedWorker.roomId === 'object' 
+                        ? selectedWorker.roomId._id 
+                        : selectedWorker.roomId;
+                      return room._id !== workerRoomId && room.availableBeds > 0;
+                    })
+                    .map(room => (
+                      <option key={room._id} value={room._id}>
+                        {room.number} (Boş Yatak: {room.availableBeds})
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="flex justify-end space-x-4">
+                <button type="button" onClick={() => setShowChangeRoomModal(false)} className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">İptal</button>
+                <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Değiştir</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
       {/* Import Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div 
+          className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+          onClick={() => setShowImportModal(false)}
+        >
+          <div 
+            className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mt-3">
               {importData.length > 0 ? (
                 <PreviewModal
