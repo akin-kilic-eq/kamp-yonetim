@@ -279,50 +279,60 @@ export default function RoomsPage() {
       failureCount: 0
     });
     
-    try {
-      const response = await importRooms(currentCamp._id, importData, currentUserEmail);
+    const batchSize = 50;
+    const totalItems = importData.length;
+    let successCount = 0;
+    let failureCount = 0;
+    let allErrors: string[] = [];
+
+    for (let i = 0; i < totalItems; i += batchSize) {
+      const batch = importData.slice(i, i + batchSize);
       
-      if ('error' in response) {
-        setError(response.error);
-      } else {
-        // Simulate progress updates
-        const totalItems = importData.length;
-        const successCount = response.results.success;
-        const failureCount = response.results.failed;
+      try {
+        const response = await importRooms(currentCamp._id, batch, currentUserEmail);
         
-        // Progress simulation
-        for (let i = 0; i <= totalItems; i++) {
-          await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
-          const progress = Math.round((i / totalItems) * 100);
-          setImportProgress(progress);
-          setImportStats({
-            currentItem: i,
-            totalItems,
-            successCount: Math.round((i / totalItems) * successCount),
-            failureCount: Math.round((i / totalItems) * failureCount)
-          });
+        if ('error' in response) {
+          throw new Error(response.error);
         }
-        
-        setError(`${response.results.success} oda başarıyla içe aktarıldı`);
-        if (response.results.failed > 0) {
-          console.error('Import hataları:', response.results.errors);
+
+        if (response.results) {
+          successCount += response.results.success;
+          failureCount += response.results.failed;
+          if (response.results.errors) {
+            allErrors = [...allErrors, ...response.results.errors];
+          }
         }
-        setShowImportModal(false);
-        setImportData([]);
-        if (currentCamp) loadRooms(currentCamp._id);
+      } catch (error: any) {
+        console.error("Batch import failed:", error);
+        failureCount += batch.length;
+        allErrors.push(`Bir grup oda işlenirken hata oluştu: ${error.message}`);
       }
-    } catch (error: any) {
-      setError(error.message || 'İçe aktarma sırasında bir hata oluştu');
-    } finally {
-      setIsImporting(false);
-      setImportProgress(0);
+
+      const processedItems = Math.min(i + batchSize, totalItems);
+      const progress = Math.round((processedItems / totalItems) * 100);
+      setImportProgress(progress);
       setImportStats({
-        currentItem: 0,
-        totalItems: 0,
-        successCount: 0,
-        failureCount: 0
+        currentItem: processedItems,
+        totalItems,
+        successCount,
+        failureCount
       });
     }
+
+    let resultMessage = `${successCount} oda başarıyla işlendi.`;
+    if (failureCount > 0) {
+      resultMessage += ` ${failureCount} oda hatalı.`;
+      console.error('Import hataları:', allErrors);
+    }
+    setError(resultMessage);
+    
+    // Kısa bir süre sonra modalı kapat ve listeyi yenile
+    setTimeout(() => {
+      setShowImportModal(false);
+      setImportData([]);
+      if (currentCamp) loadRooms(currentCamp._id);
+      setIsImporting(false);
+    }, 2000);
   };
 
   // Oda güncelleme

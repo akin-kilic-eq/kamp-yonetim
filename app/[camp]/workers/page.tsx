@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { getRooms, getWorkers, createWorker, updateWorker, deleteWorker, importWorkers } from '@/app/services/api';
 import { Room, Worker, Camp } from '../types';
@@ -44,7 +44,6 @@ export default function WorkersPage() {
 
   // Arama ve sıralama
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredWorkers, setFilteredWorkers] = useState<WorkerWithRoom[]>([]);
   const [sortConfig, setSortConfig] = useState<{
     key: keyof WorkerWithRoom;
     direction: 'ascending' | 'descending';
@@ -136,21 +135,6 @@ export default function WorkersPage() {
     }
   };
 
-  // Arama fonksiyonu
-  useEffect(() => {
-    if (searchTerm.trim() === '') {
-      setFilteredWorkers(workers);
-    } else {
-      const searchTermLower = searchTerm.toLowerCase();
-      const filtered = workers.filter(worker =>
-        worker.name.toLowerCase().includes(searchTermLower) ||
-        worker.surname.toLowerCase().includes(searchTermLower) ||
-        worker.registrationNumber.toLowerCase().includes(searchTermLower)
-      );
-      setFilteredWorkers(filtered);
-    }
-  }, [searchTerm, workers]);
-
   // Sıralama fonksiyonu
   const handleSort = (key: keyof WorkerWithRoom) => {
     let direction: 'ascending' | 'descending' = 'ascending';
@@ -159,7 +143,7 @@ export default function WorkersPage() {
       direction = 'descending';
     }
     
-    const sorted = [...filteredWorkers].sort((a, b) => {
+    const sorted = [...workers].sort((a, b) => {
       if (key === 'entryDate') {
         const dateA = new Date(a[key] || '').getTime();
         const dateB = new Date(b[key] || '').getTime();
@@ -174,7 +158,7 @@ export default function WorkersPage() {
       return 0;
     });
 
-    setFilteredWorkers(sorted);
+    setWorkers(sorted);
     setSortConfig({ key, direction });
   };
 
@@ -341,10 +325,7 @@ export default function WorkersPage() {
   };
 
   const handleImport = async () => {
-    if (!currentCamp?._id || importData.length === 0) {
-      setError('İçe aktarılacak veri veya kamp bilgisi bulunamadı');
-      return;
-    }
+    if (!currentCamp || !importData.length || !currentUserEmail) return;
 
     setIsImporting(true);
     setImportProgress(0);
@@ -354,79 +335,96 @@ export default function WorkersPage() {
       successCount: 0,
       failureCount: 0
     });
-    setError('');
 
-    try {
-      const workersToImport = importData.map(d => ({
-        'SICIL NO': d['Sicil No'],
-        'ADI SOYADI': d['Adı Soyadı'],
-        'KALDIĞI ODA': d['Kaldığı Oda'],
-        'ÇALIŞTIĞI ŞANTİYE': d['Çalıştığı Şantiye'],
-        'Odaya Giriş Tarihi': d['Odaya Giriş Tarihi'],
-      }));
+    const batchSize = 50;
+    const totalItems = importData.length;
+    let successCount = 0;
+    let failureCount = 0;
+    let allErrors: string[] = [];
 
-      if (!currentUserEmail) {
-        setError('Yetkilendirme hatası: Kullanıcı bilgisi bulunamadı.');
-        setIsImporting(false);
-        return;
+    for (let i = 0; i < totalItems; i += batchSize) {
+      const batch = importData.slice(i, i + batchSize);
+
+      try {
+        const response = await importWorkers(currentCamp._id, batch, currentUserEmail);
+
+        if ('error' in response) {
+          throw new Error(response.error);
+        }
+
+        if (response.results) {
+          successCount += response.results.success;
+          failureCount += response.results.failed;
+          if (response.results.errors) {
+            allErrors = [...allErrors, ...response.results.errors];
+          }
+        }
+      } catch (error: any) {
+        console.error("Batch import failed:", error);
+        failureCount += batch.length;
+        allErrors.push(`Bir grup işçi işlenirken hata oluştu: ${error.message}`);
       }
 
-      const response = await importWorkers(currentCamp._id, workersToImport, currentUserEmail);
-
-      if ('error' in response) {
-        console.error('Import API error:', response.error);
-        setError(response.error);
-        return;
-      }
-
-      // Simulate progress updates
-      const totalItems = importData.length;
-      const successCount = response.results.success;
-      const failureCount = response.results.failed;
-      
-      // Progress simulation
-      for (let i = 0; i <= totalItems; i++) {
-        await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
-        const progress = Math.round((i / totalItems) * 100);
-        setImportProgress(progress);
-        setImportStats({
-          currentItem: i,
-          totalItems,
-          successCount: Math.round((i / totalItems) * successCount),
-          failureCount: Math.round((i / totalItems) * failureCount)
-        });
-      }
-
-      // İşlem başarılı mesajı
-      setError(`${response.results.success} işçi başarıyla içe aktarıldı`);
-      if (response.results.failed > 0) {
-        console.error('Import hataları:', response.results.errors);
-        setError(prev => `${prev}. ${response.results.failed} işçi aktarılamadı.`);
-      }
-      
-      setShowImportModal(false);
-      setImportData([]);
-      
-      // Verilerin MongoDB'ye yazılması için kısa bir bekleme
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Verileri yeniden yükle
-      await loadData(currentCamp!._id);
-
-    } catch (error) {
-      console.error('Import error:', error);
-      setError('İçe aktarma sırasında bir hata oluştu');
-    } finally {
-      setIsImporting(false);
-      setImportProgress(0);
+      const processedItems = Math.min(i + batchSize, totalItems);
+      const progress = Math.round((processedItems / totalItems) * 100);
+      setImportProgress(progress);
       setImportStats({
-        currentItem: 0,
-        totalItems: 0,
-        successCount: 0,
-        failureCount: 0
+        currentItem: processedItems,
+        totalItems,
+        successCount,
+        failureCount
       });
     }
+
+    let resultMessage = `${successCount} işçi başarıyla işlendi.`;
+    if (failureCount > 0) {
+      resultMessage += ` ${failureCount} işçi hatalı.`;
+      console.error('Import hataları:', allErrors);
+    }
+    setError(resultMessage);
+
+    setTimeout(() => {
+      setShowImportModal(false);
+      setImportData([]);
+      if (currentCamp) loadData(currentCamp._id);
+      setIsImporting(false);
+    }, 2000);
   };
+
+  const filteredWorkers = useMemo(() => {
+    let sortedWorkers = [...workers];
+    if (sortConfig) {
+      sortedWorkers.sort((a, b) => {
+        if (sortConfig.key === 'name') {
+          const nameA = a.name.toLowerCase();
+          const nameB = b.name.toLowerCase();
+          if (nameA < nameB) return sortConfig.direction === 'ascending' ? -1 : 1;
+          if (nameA > nameB) return sortConfig.direction === 'ascending' ? 1 : -1;
+        } else if (sortConfig.key === 'registrationNumber') {
+          const regA = a.registrationNumber.toLowerCase();
+          const regB = b.registrationNumber.toLowerCase();
+          if (regA < regB) return sortConfig.direction === 'ascending' ? -1 : 1;
+          if (regA > regB) return sortConfig.direction === 'ascending' ? 1 : -1;
+        } else if (sortConfig.key === 'entryDate') {
+          const dateA = new Date(a.entryDate).getTime();
+          const dateB = new Date(b.entryDate).getTime();
+          return sortConfig.direction === 'ascending' ? dateA - dateB : dateB - dateA;
+        }
+        return 0;
+      });
+    }
+
+    if (searchTerm.trim() === '') {
+      return sortedWorkers;
+    }
+
+    return sortedWorkers.filter(worker =>
+      `${worker.name} ${worker.surname}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      worker.registrationNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      worker.project.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      worker.roomNumber?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [workers, searchTerm, sortConfig]);
 
   if (loading) {
     return (
