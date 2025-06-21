@@ -159,8 +159,8 @@ export const importRooms = async (campId: string, roomsData: any[], userEmail: s
     });
     
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Odalar içe aktarılırken bir hata oluştu');
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Odalar içe aktarılırken bir hata oluştu');
     }
     
     return await response.json();
@@ -180,8 +180,8 @@ export const importWorkers = async (campId: string, workersData: any[], userEmai
     });
     
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'İşçiler içe aktarılırken bir hata oluştu');
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'İşçiler içe aktarılırken bir hata oluştu');
     }
     
     return await response.json();

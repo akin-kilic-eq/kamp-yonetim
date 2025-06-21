@@ -40,12 +40,19 @@ export async function POST(request: Request) {
   try {
     const { campId, workers, userEmail } = await request.json();
 
+    console.log('--- İşçi Import İsteği Alındı ---');
+    console.log('Gelen Kullanıcı Email:', userEmail);
+    console.log('Gelen Kamp ID:', campId);
+
     if (!userEmail) {
+      console.log('Hata: Kullanıcı emaili bulunamadı.');
       return NextResponse.json({ error: 'Yetkilendirme gerekli' }, { status: 401 });
     }
 
     const hasPermission = await checkWritePermission(userEmail, campId);
+    console.log('Yazma İzni Var Mı?:', hasPermission);
     if (!hasPermission) {
+      console.log('Hata: Yazma izni reddedildi.');
       return NextResponse.json({ error: 'Yazma izniniz bulunmuyor' }, { status: 403 });
     }
 
@@ -92,26 +99,26 @@ export async function POST(request: Request) {
         console.log(`Processing worker ${i + 1}/${totalWorkers}:`, workerData);
 
         // Zorunlu alan kontrolü
-        if (!workerData['SICIL NO'] || !workerData['ADI SOYADI'] || !workerData['ÇALIŞTIĞI ŞANTİYE']) {
+        if (!workerData['Sicil No'] || !workerData['Adı Soyadı'] || !workerData['Çalıştığı Şantiye']) {
           results.failed++;
-          results.errors.push(`Sicil No ${workerData['SICIL NO'] || 'Bilinmeyen'}: Zorunlu alanlar eksik`);
+          results.errors.push(`Sicil No ${workerData['Sicil No'] || 'Bilinmeyen'}: Zorunlu alanlar eksik`);
           continue;
         }
 
         // Mevcut işçi kontrolü - kullanıcının tüm kamplarında kontrol et
         const existingWorker = await Worker.findOne({
-          registrationNumber: workerData['SICIL NO'].toString(),
+          registrationNumber: workerData['Sicil No'].toString(),
           roomId: { $in: userRoomIds }
         });
 
         if (existingWorker) {
           results.failed++;
-          results.errors.push(`Sicil No ${workerData['SICIL NO']}: Bu işçi zaten mevcut`);
+          results.errors.push(`Sicil No ${workerData['Sicil No']}: Bu işçi zaten mevcut`);
           continue;
         }
 
         // İsim ve soyisim ayırma
-        const fullName = (workerData['ADI SOYADI'] || '').toString().trim();
+        const fullName = (workerData['Adı Soyadı'] || '').toString().trim();
         const nameParts = fullName.split(/\s+/).filter((part: string) => part);
 
         let name = '';
@@ -127,18 +134,18 @@ export async function POST(request: Request) {
 
         // Oda kontrolü ve atama
         let roomId = null;
-        if (workerData['KALDIĞI ODA']) {
-          const room = roomsByNumber.get(workerData['KALDIĞI ODA'].toString());
+        if (workerData['Kaldığı Oda']) {
+          const room = roomsByNumber.get(workerData['Kaldığı Oda'].toString());
 
           if (!room) {
             results.failed++;
-            results.errors.push(`Sicil No ${workerData['SICIL NO']}: Belirtilen oda (${workerData['KALDIĞI ODA']}) bulunamadı`);
+            results.errors.push(`Sicil No ${workerData['Sicil No']}: Belirtilen oda (${workerData['Kaldığı Oda']}) bulunamadı`);
             continue;
           }
 
           if (room.availableBeds <= 0) {
             results.failed++;
-            results.errors.push(`Sicil No ${workerData['SICIL NO']}: Oda ${workerData['KALDIĞI ODA']} dolu (boş yatak yok)`);
+            results.errors.push(`Sicil No ${workerData['Sicil No']}: Oda ${workerData['Kaldığı Oda']} dolu (boş yatak yok)`);
             continue;
           }
 
@@ -147,12 +154,12 @@ export async function POST(request: Request) {
           try {
             await Room.findByIdAndUpdate(roomId, {
               $inc: { availableBeds: -1 },
-              $addToSet: { workers: workerData['SICIL NO'].toString() }
+              $addToSet: { workers: workerData['Sicil No'].toString() }
             });
           } catch (updateError) {
             console.error('Room update error:', updateError);
             results.failed++;
-            results.errors.push(`Sicil No ${workerData['SICIL NO']}: Oda güncellenirken hata oluştu`);
+            results.errors.push(`Sicil No ${workerData['Sicil No']}: Oda güncellenirken hata oluştu`);
             continue;
           }
         }
@@ -164,8 +171,8 @@ export async function POST(request: Request) {
           campId: new Types.ObjectId(campId),
           name,
           surname,
-          registrationNumber: workerData['SICIL NO'].toString(),
-          project: workerData['ÇALIŞTIĞI ŞANTİYE'],
+          registrationNumber: workerData['Sicil No'].toString(),
+          project: workerData['Çalıştığı Şantiye'],
           roomId: roomId ? new Types.ObjectId(roomId.toString()) : null,
           entryDate: entryDate,
         };
@@ -186,7 +193,7 @@ export async function POST(request: Request) {
       } catch (error: any) {
         console.error('Worker import error:', error);
         results.failed++;
-        results.errors.push(`Sicil No ${workerData['SICIL NO'] || 'Bilinmeyen'}: ${error.message}`);
+        results.errors.push(`Sicil No ${workerData['Sicil No'] || 'Bilinmeyen'}: ${error.message}`);
       }
     }
 
