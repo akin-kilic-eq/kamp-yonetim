@@ -53,6 +53,12 @@ export default function RoomsPage() {
   const [importData, setImportData] = useState<any[]>([]);
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
+  const [importStats, setImportStats] = useState({
+    currentItem: 0,
+    totalItems: 0,
+    successCount: 0,
+    failureCount: 0
+  });
   const [loading, setLoading] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [hasWriteAccess, setHasWriteAccess] = useState(false);
@@ -265,12 +271,38 @@ export default function RoomsPage() {
     if (!currentCamp || !importData.length || !currentUserEmail) return;
 
     setIsImporting(true);
+    setImportProgress(0);
+    setImportStats({
+      currentItem: 0,
+      totalItems: importData.length,
+      successCount: 0,
+      failureCount: 0
+    });
+    
     try {
       const response = await importRooms(currentCamp._id, importData, currentUserEmail);
       
       if ('error' in response) {
         setError(response.error);
       } else {
+        // Simulate progress updates
+        const totalItems = importData.length;
+        const successCount = response.results.success;
+        const failureCount = response.results.failed;
+        
+        // Progress simulation
+        for (let i = 0; i <= totalItems; i++) {
+          await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+          const progress = Math.round((i / totalItems) * 100);
+          setImportProgress(progress);
+          setImportStats({
+            currentItem: i,
+            totalItems,
+            successCount: Math.round((i / totalItems) * successCount),
+            failureCount: Math.round((i / totalItems) * failureCount)
+          });
+        }
+        
         setError(`${response.results.success} oda başarıyla içe aktarıldı`);
         if (response.results.failed > 0) {
           console.error('Import hataları:', response.results.errors);
@@ -284,6 +316,12 @@ export default function RoomsPage() {
     } finally {
       setIsImporting(false);
       setImportProgress(0);
+      setImportStats({
+        currentItem: 0,
+        totalItems: 0,
+        successCount: 0,
+        failureCount: 0
+      });
     }
   };
 
@@ -967,7 +1005,7 @@ export default function RoomsPage() {
           onClick={() => setShowImportModal(false)}
         >
           <div 
-            className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white"
+            className="relative top-20 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mt-3">
@@ -986,6 +1024,11 @@ export default function RoomsPage() {
                   }}
                   isLoading={isImporting}
                   type="rooms"
+                  progress={importProgress}
+                  currentItem={importStats.currentItem}
+                  totalItems={importStats.totalItems}
+                  successCount={importStats.successCount}
+                  failureCount={importStats.failureCount}
                 />
               ) : (
                 <ImportExcel

@@ -71,9 +71,25 @@ export async function POST(request: Request) {
       roomsByNumber.set(room.number.toString(), room);
     });
 
-    for (const workerData of workers) {
+    // Kullanıcının kamplarını bul (sicil numarası kontrolü için)
+    const userCamps = await Camp.find({
+      $or: [
+        { userEmail: userEmail },
+        { 'sharedWith.email': userEmail }
+      ]
+    });
+    
+    const userCampIds = userCamps.map(camp => camp._id);
+    const userRooms = await Room.find({ campId: { $in: userCampIds } });
+    const userRoomIds = userRooms.map(room => room._id);
+
+    const totalWorkers = workers.length;
+
+    for (let i = 0; i < workers.length; i++) {
+      const workerData = workers[i];
+      
       try {
-        console.log('Processing worker:', workerData);
+        console.log(`Processing worker ${i + 1}/${totalWorkers}:`, workerData);
 
         // Zorunlu alan kontrolü
         if (!workerData['SICIL NO'] || !workerData['ADI SOYADI'] || !workerData['ÇALIŞTIĞI ŞANTİYE']) {
@@ -83,21 +99,6 @@ export async function POST(request: Request) {
         }
 
         // Mevcut işçi kontrolü - kullanıcının tüm kamplarında kontrol et
-        // Kullanıcının sahip olduğu kampları bul
-        const userCamps = await Camp.find({
-          $or: [
-            { userEmail: userEmail }, // Kendi oluşturduğu kamplar
-            { 'sharedWith.email': userEmail } // Paylaşıldığı kamplar
-          ]
-        });
-        
-        const userCampIds = userCamps.map(camp => camp._id);
-        
-        // Kullanıcının kamplarındaki odaları bul
-        const userRooms = await Room.find({ campId: { $in: userCampIds } });
-        const userRoomIds = userRooms.map(room => room._id);
-        
-        // Sadece kullanıcının kamplarındaki işçiler arasında sicil numarası kontrolü yap
         const existingWorker = await Worker.findOne({
           registrationNumber: workerData['SICIL NO'].toString(),
           roomId: { $in: userRoomIds }
@@ -111,17 +112,17 @@ export async function POST(request: Request) {
 
         // İsim ve soyisim ayırma
         const fullName = (workerData['ADI SOYADI'] || '').toString().trim();
-        const nameParts = fullName.split(/\s+/).filter((part: string) => part); // Boşlukları kaldır
+        const nameParts = fullName.split(/\s+/).filter((part: string) => part);
 
         let name = '';
         let surname = '';
 
         if (nameParts.length > 1) {
-          surname = nameParts.pop() || ''; // Son kelimeyi soyisim olarak al
-          name = nameParts.join(' '); // Geri kalanları isim olarak al
+          surname = nameParts.pop() || '';
+          name = nameParts.join(' ');
         } else {
-          name = fullName; // Tek kelime varsa hepsi isim
-          surname = '-'; // Soyisim zorunlu olduğu için tire ekle
+          name = fullName;
+          surname = '-';
         }
 
         // Oda kontrolü ve atama
@@ -144,7 +145,6 @@ export async function POST(request: Request) {
           roomId = room._id;
 
           try {
-            // Odanın boş yatak sayısını ve işçi listesini güncelle
             await Room.findByIdAndUpdate(roomId, {
               $inc: { availableBeds: -1 },
               $addToSet: { workers: workerData['SICIL NO'].toString() }
@@ -176,6 +176,13 @@ export async function POST(request: Request) {
         await newWorker.save();
 
         results.success++;
+        
+        // Her 5 işçide bir console'a ilerleme yazdır
+        if ((i + 1) % 5 === 0 || i === totalWorkers - 1) {
+          const progress = Math.round(((i + 1) / totalWorkers) * 100);
+          console.log(`Import progress: ${progress}% (${i + 1}/${totalWorkers})`);
+        }
+        
       } catch (error: any) {
         console.error('Worker import error:', error);
         results.failed++;

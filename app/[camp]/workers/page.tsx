@@ -54,6 +54,12 @@ export default function WorkersPage() {
   const [importData, setImportData] = useState<any[]>([]);
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
+  const [importStats, setImportStats] = useState({
+    currentItem: 0,
+    totalItems: 0,
+    successCount: 0,
+    failureCount: 0
+  });
 
   // Proje seçenekleri
   const projectOptions = [
@@ -342,6 +348,12 @@ export default function WorkersPage() {
 
     setIsImporting(true);
     setImportProgress(0);
+    setImportStats({
+      currentItem: 0,
+      totalItems: importData.length,
+      successCount: 0,
+      failureCount: 0
+    });
     setError('');
 
     try {
@@ -367,6 +379,24 @@ export default function WorkersPage() {
         return;
       }
 
+      // Simulate progress updates
+      const totalItems = importData.length;
+      const successCount = response.results.success;
+      const failureCount = response.results.failed;
+      
+      // Progress simulation
+      for (let i = 0; i <= totalItems; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+        const progress = Math.round((i / totalItems) * 100);
+        setImportProgress(progress);
+        setImportStats({
+          currentItem: i,
+          totalItems,
+          successCount: Math.round((i / totalItems) * successCount),
+          failureCount: Math.round((i / totalItems) * failureCount)
+        });
+      }
+
       // İşlem başarılı mesajı
       setError(`${response.results.success} işçi başarıyla içe aktarıldı`);
       if (response.results.failed > 0) {
@@ -389,6 +419,12 @@ export default function WorkersPage() {
     } finally {
       setIsImporting(false);
       setImportProgress(0);
+      setImportStats({
+        currentItem: 0,
+        totalItems: 0,
+        successCount: 0,
+        failureCount: 0
+      });
     }
   };
 
@@ -843,7 +879,7 @@ export default function WorkersPage() {
           onClick={() => setShowImportModal(false)}
         >
           <div 
-            className="bg-white rounded-lg p-6 max-w-md w-full"
+            className="bg-white rounded-lg p-6 w-4/5 max-w-4xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4">
@@ -877,6 +913,11 @@ export default function WorkersPage() {
                 }}
                 isLoading={isImporting}
                 type="workers"
+                progress={importProgress}
+                currentItem={importStats.currentItem}
+                totalItems={importStats.totalItems}
+                successCount={importStats.successCount}
+                failureCount={importStats.failureCount}
               />
             ) : (
               <ImportExcel

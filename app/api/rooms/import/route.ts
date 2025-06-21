@@ -45,8 +45,14 @@ export async function POST(request: Request) {
       errors: [] as string[]
     };
 
-    for (const roomData of rooms) {
+    const totalRooms = rooms.length;
+
+    for (let i = 0; i < rooms.length; i++) {
+      const roomData = rooms[i];
+      
       try {
+        console.log(`Processing room ${i + 1}/${totalRooms}:`, roomData);
+
         // Oda numarası ve şantiye kontrolü
         if (!roomData['Oda No'] || !roomData['Şantiyesi']) {
           results.failed++;
@@ -80,6 +86,13 @@ export async function POST(request: Request) {
 
         await newRoom.save();
         results.success++;
+        
+        // Her 3 odada bir console'a ilerleme yazdır
+        if ((i + 1) % 3 === 0 || i === totalRooms - 1) {
+          const progress = Math.round(((i + 1) / totalRooms) * 100);
+          console.log(`Import progress: ${progress}% (${i + 1}/${totalRooms})`);
+        }
+        
       } catch (error: any) {
         results.failed++;
         results.errors.push(`Oda No ${roomData['Oda No'] || 'Bilinmeyen'}: ${error.message}`);
