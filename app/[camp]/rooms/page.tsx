@@ -279,7 +279,7 @@ export default function RoomsPage() {
       failureCount: 0
     });
     
-    const batchSize = 50;
+    const batchSize = 5;
     const totalItems = importData.length;
     let successCount = 0;
     let failureCount = 0;
