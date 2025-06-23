@@ -173,15 +173,15 @@ export async function PUT(request: Request) {
     const oldRoomId = oldWorker.roomId?.toString();
     const newRoomId = roomId;
 
-    // Eğer oda değiştiyse, eski ve yeni odaları güncelle
-    if (oldRoomId && oldRoomId !== newRoomId) {
+    // Sadece yeni bir roomId gönderildiyse oda değiştirme işlemini yap
+    if (newRoomId && oldRoomId !== newRoomId) {
       // Yeni oda kontrolü
       const newRoom = await Room.findById(newRoomId);
       if (!newRoom) {
         return NextResponse.json(
           { error: 'Yeni oda bulunamadı' },
           { status: 404 }
-      );
+        );
       }
 
       // Kamp kontrolü
@@ -210,6 +210,12 @@ export async function PUT(request: Request) {
         $push: { workers: _id },
         $inc: { availableBeds: -1 }
       });
+    }
+
+    // İşçiyi güncellemek için veri objesi oluştur
+    const updateData: any = { name, surname, registrationNumber, project };
+    if (newRoomId) {
+      updateData.roomId = newRoomId;
     }
 
     // Sicil numarası kontrolü - sadece kullanıcının kendi kamplarında kontrol et (mevcut işçi hariç)
@@ -244,7 +250,7 @@ export async function PUT(request: Request) {
     // İşçiyi güncelle
     const worker = await Worker.findByIdAndUpdate(
       _id,
-      { name, surname, registrationNumber, project, roomId },
+      updateData,
       { new: true }
     ).populate('roomId', 'number');
 

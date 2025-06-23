@@ -235,7 +235,6 @@ export default function WorkersPage() {
         surname: selectedWorker.surname,
         registrationNumber: selectedWorker.registrationNumber,
         project: selectedWorker.project,
-        roomId: selectedWorker.roomId,
         campId: campId,
         entryDate: selectedWorker.entryDate
       }, currentUserEmail);
@@ -725,29 +724,6 @@ export default function WorkersPage() {
                       {option.label}
                     </option>
                   ))}
-                </select>
-              </div>
-              <div className="mb-4">
-                <label className="block mb-1 font-medium">Oda *</label>
-                <select
-                  value={typeof selectedWorker.roomId === 'string' ? selectedWorker.roomId : selectedWorker.roomId._id}
-                  onChange={(e) => setSelectedWorker({ ...selectedWorker, roomId: e.target.value })}
-                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                >
-                  <option value="">Oda Seçin</option>
-                  {rooms.map((room) => {
-                    const isCurrentRoom = typeof selectedWorker.roomId === 'string' 
-                      ? selectedWorker.roomId === room._id
-                      : selectedWorker.roomId._id === room._id;
-                    const availableBeds = isCurrentRoom ? room.availableBeds + 1 : room.availableBeds;
-                    
-                    return (
-                      <option key={room._id} value={room._id}>
-                        Oda {room.number} ({availableBeds} boş yatak)
-                      </option>
-                    );
-                  })}
                 </select>
               </div>
               <div className="flex justify-end gap-2">
