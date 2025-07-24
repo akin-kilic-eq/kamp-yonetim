@@ -16,7 +16,7 @@ import {
 import { Room, Worker } from '../types';
 import { FaChartPie, FaBed, FaUserFriends } from 'react-icons/fa';
 import XLSX from 'xlsx-js-style';
-import { getRooms, getWorkers } from '@/app/services/api';
+import { getRooms, getWorkers, getCampStats } from '@/app/services/api';
 
 ChartJS.register(
   ArcElement,
@@ -35,10 +35,6 @@ interface Stats {
   availableBeds: number;
   totalWorkers: number;
   occupancyRate: number;
-  slava4Rooms: number;
-  slava23Rooms: number;
-  slava4Workers: number;
-  slava23Workers: number;
   averageOccupancyPerRoom: number;
   mostOccupiedRoom: string;
   leastOccupiedRoom: string;
@@ -57,6 +53,18 @@ interface Stats {
       otherProjectWorkers: number;
     };
   };
+  siteStats: {
+    [key: string]: {
+      rooms: number;
+      capacity: number;
+      workers: number;
+      occupancyRate: number;
+    };
+  };
+  availableSites: Array<{
+    name: string;
+    _id: string;
+  }>;
 }
 
 interface CellStyle {
@@ -102,21 +110,20 @@ export default function ReportPage() {
     availableBeds: 0,
     totalWorkers: 0,
     occupancyRate: 0,
-    slava4Rooms: 0,
-    slava23Rooms: 0,
-    slava4Workers: 0,
-    slava23Workers: 0,
     averageOccupancyPerRoom: 0,
     mostOccupiedRoom: '',
     leastOccupiedRoom: '',
     recentWorkers: 0,
     projectDistribution: {},
-    crossProjectStats: {}
+    crossProjectStats: {},
+    siteStats: {},
+    availableSites: []
   });
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedRooms, setSelectedRooms] = useState<Room[]>([]);
   const [currentCamp, setCurrentCamp] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [pieData, setPieData] = useState({
     labels: ['Dolu Yatak', 'Boş Yatak'],
     datasets: [
@@ -141,7 +148,7 @@ export default function ReportPage() {
     ]
   });
 
-  const updateChartData = (projectCounts: any, totalCapacity: number, occupiedBeds: number) => {
+  const updateChartData = (siteStats: any, totalCapacity: number, occupiedBeds: number) => {
     // Pasta grafik verilerini güncelle
     setPieData({
       labels: ['Dolu Yatak', 'Boş Yatak'],
@@ -156,13 +163,17 @@ export default function ReportPage() {
     });
 
     // Çubuk grafik verilerini güncelle
+    const siteNames = Object.keys(siteStats);
+    const siteWorkers = siteNames.map(siteName => siteStats[siteName].workers || 0);
+    const colors = ['#60A5FA', '#818CF8', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6'];
+
     setBarData({
-      labels: ['Slava 4', 'Slava 2-3'],
+      labels: siteNames,
       datasets: [
         {
           label: 'İşçi Sayısı',
-          data: [projectCounts['Slava 4'] || 0, projectCounts['Slava 2-3'] || 0],
-          backgroundColor: ['#60A5FA', '#818CF8'],
+          data: siteWorkers,
+          backgroundColor: siteNames.map((_, index) => colors[index % colors.length]),
           borderRadius: 4,
           barThickness: 40
         }
@@ -177,171 +188,82 @@ export default function ReportPage() {
       setCurrentCamp(camp);
       if (camp?._id) {
         loadData(camp._id);
+      } else {
+        setLoading(false);
       }
+    } else {
+      setLoading(false);
     }
   }, []);
 
   const loadData = async (campId: string) => {
     try {
+      setLoading(true);
+      // Optimize edilmiş istatistik API'sini kullan
+      const statsData = await getCampStats(campId);
+      console.log('API\'den gelen stats verileri:', statsData);
+      if (statsData.error) {
+        console.error('Stats API error:', statsData.error);
+        return;
+      }
+
+      // Temel istatistikleri set et
+      setStats({
+        totalRooms: statsData.totalRooms,
+        totalCapacity: statsData.totalCapacity,
+        occupiedBeds: statsData.totalWorkers,
+        availableBeds: statsData.availableBeds,
+        totalWorkers: statsData.totalWorkers,
+        occupancyRate: statsData.occupancyRate,
+        averageOccupancyPerRoom: statsData.averageOccupancyPerRoom,
+        mostOccupiedRoom: statsData.mostOccupiedRoom,
+        leastOccupiedRoom: statsData.leastOccupiedRoom,
+        recentWorkers: 0, // Bu bilgi için ayrı sorgu gerekebilir
+        projectDistribution: statsData.siteStats || {},
+        crossProjectStats: statsData.crossProjectStats || {},
+        siteStats: statsData.siteStats || {},
+        availableSites: statsData.availableSites || []
+      });
+
+      // Grafik verilerini güncelle
+      updateChartData(
+        statsData.siteStats || {},
+        statsData.totalCapacity,
+        statsData.totalWorkers
+      );
+
+      // Detaylı veriler için ayrı çağrılar (gerekirse)
       const roomsData = await getRooms(campId);
-      if (!Array.isArray(roomsData)) return;
-      setRooms(roomsData);
+      console.log('API\'den gelen odalar:', roomsData);
+      if (Array.isArray(roomsData)) {
+        setRooms(roomsData);
+      }
 
       const workersData = await getWorkers(campId);
-      if (!Array.isArray(workersData)) return;
-      setWorkers(workersData);
-
-      const workerProjectStats: { [key: string]: number } = {
-        'Slava 4': 0,
-        'Slava 2-3': 0
-      };
-
-      workersData.forEach((worker: Worker) => {
-        if (worker.project === 'Slava 4') {
-          workerProjectStats['Slava 4']++;
-        } else if (worker.project === 'Slava 2-3') {
-          workerProjectStats['Slava 2-3']++;
-        }
-      });
-      
-      const roomProjectStats: { [key: string]: { rooms: number, capacity: number, workers: number } } = {
-        'Slava 4': { rooms: 0, capacity: 0, workers: 0 },
-        'Slava 2-3': { rooms: 0, capacity: 0, workers: 0 }
-      };
-      
-      roomsData.forEach((room: Room) => {
-        if (room.project && roomProjectStats[room.project]) {
-          roomProjectStats[room.project].rooms += 1;
-          roomProjectStats[room.project].capacity += room.capacity;
-          const roomWorkers = workersData.filter((worker: Worker) => {
-            const workerRoomId = typeof worker.roomId === 'object' ? worker.roomId?._id : worker.roomId;
-            return workerRoomId === room._id;
-          });
-          roomProjectStats[room.project].workers += roomWorkers.length;
-        }
-      });
-
-      const projectDistribution: Stats['projectDistribution'] = {
-        'Slava 4': {
-          rooms: roomProjectStats['Slava 4'].rooms,
-          workers: roomProjectStats['Slava 4'].workers,
-          occupancyRate: roomProjectStats['Slava 4'].capacity > 0 ?
-            (roomProjectStats['Slava 4'].workers / roomProjectStats['Slava 4'].capacity) * 100 : 0
-        },
-        'Slava 2-3': {
-          rooms: roomProjectStats['Slava 2-3'].rooms,
-          workers: roomProjectStats['Slava 2-3'].workers,
-          occupancyRate: roomProjectStats['Slava 2-3'].capacity > 0 ?
-            (roomProjectStats['Slava 2-3'].workers / roomProjectStats['Slava 2-3'].capacity) * 100 : 0
-        }
-      };
-
-      const totalRooms = roomsData.length;
-      const totalCapacity = roomsData.reduce((sum: number, room: Room) => sum + room.capacity, 0);
-      const occupiedBeds = workersData.length;
-      const availableBeds = totalCapacity - occupiedBeds;
-      const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
-
-      updateChartData(workerProjectStats, totalCapacity, occupiedBeds);
-
-      type ProjectType = 'Slava 4' | 'Slava 2-3';
-      type ProjectStats = {
-        totalInRooms: number;
-        sameProject: number;
-      };
-      
-      const projectWorkerStats: Record<ProjectType, ProjectStats> = {
-        'Slava 4': { totalInRooms: 0, sameProject: 0 },
-        'Slava 2-3': { totalInRooms: 0, sameProject: 0 }
-      };
-
-      roomsData.forEach((room: Room) => {
-        if (room.project && (room.project === 'Slava 4' || room.project === 'Slava 2-3')) {
-          const roomWorkers = workersData.filter((worker: Worker) => {
-            const workerRoomId = typeof worker.roomId === 'object' ? worker.roomId?._id : worker.roomId;
-            return workerRoomId === room._id;
-          });
-
-          roomWorkers.forEach((worker: Worker) => {
-            projectWorkerStats[room.project as ProjectType].totalInRooms++;
-            if (worker.project === room.project) {
-              projectWorkerStats[room.project as ProjectType].sameProject++;
-            }
-          });
-        }
-      });
-
-      let mostOccupiedRoom = '';
-      let leastOccupiedRoom = '';
-      let maxOccupancyRate = -1;
-      let minOccupancyRate = Number.MAX_VALUE;
-
-      roomsData.forEach((room: Room) => {
-        const roomWorkers = workersData.filter((worker: Worker) => {
-          const workerRoomId = typeof worker.roomId === 'object' ? worker.roomId?._id : worker.roomId;
-          return workerRoomId === room._id;
-        });
-
-        const occupancy = roomWorkers.length;
-        const occupancyRate = room.capacity > 0 ? (occupancy / room.capacity) * 100 : 0;
-        
-        if (occupancyRate > maxOccupancyRate) {
-          maxOccupancyRate = occupancyRate;
-          mostOccupiedRoom = `Oda ${room.number} (${occupancy}/${room.capacity})`;
-        }
-        
-        if (occupancyRate < minOccupancyRate) {
-          minOccupancyRate = occupancyRate;
-          leastOccupiedRoom = `Oda ${room.number} (${occupancy}/${room.capacity})`;
-        }
-      });
-
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      
-      const recentWorkers = workersData.filter((worker: Worker) => {
-        if (!worker.entryDate) return false;
-        const entryDate = new Date(worker.entryDate);
-        return entryDate >= sevenDaysAgo;
-      }).length;
-
-      setStats({
-        totalRooms,
-        totalCapacity,
-        occupiedBeds,
-        availableBeds,
-        totalWorkers: occupiedBeds,
-        occupancyRate,
-        slava4Rooms: roomProjectStats['Slava 4'].rooms,
-        slava23Rooms: roomProjectStats['Slava 2-3'].rooms,
-        slava4Workers: workerProjectStats['Slava 4'],
-        slava23Workers: workerProjectStats['Slava 2-3'],
-        averageOccupancyPerRoom: totalRooms > 0 ? occupiedBeds / totalRooms : 0,
-        mostOccupiedRoom,
-        leastOccupiedRoom,
-        recentWorkers,
-        projectDistribution,
-        crossProjectStats: {
-          'Slava 4': {
-            totalWorkers: projectWorkerStats['Slava 4'].totalInRooms,
-            sameProjectWorkers: projectWorkerStats['Slava 4'].sameProject,
-            otherProjectWorkers: projectWorkerStats['Slava 4'].totalInRooms - projectWorkerStats['Slava 4'].sameProject
-          },
-          'Slava 2-3': {
-            totalWorkers: projectWorkerStats['Slava 2-3'].totalInRooms,
-            sameProjectWorkers: projectWorkerStats['Slava 2-3'].sameProject,
-            otherProjectWorkers: projectWorkerStats['Slava 2-3'].totalInRooms - projectWorkerStats['Slava 2-3'].sameProject
-          }
-        }
-      });
+      console.log('API\'den gelen işçiler:', workersData);
+      if (Array.isArray(workersData)) {
+        setWorkers(workersData);
+      }
 
     } catch (error) {
       console.error('Veriler yüklenirken hata:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleProjectClick = (project: string) => {
-    const projectRooms = rooms.filter(room => room.project === project);
+    console.log('Tıklanan şantiye:', project);
+    console.log('Mevcut odalar:', rooms);
+    console.log('Odaların proje alanları:', rooms.map(room => ({ number: room.number, project: room.project })));
+    
+    // Daha esnek filtreleme - trim ve case insensitive
+    const projectRooms = rooms.filter(room => 
+      room.project && 
+      room.project.trim().toLowerCase() === project.trim().toLowerCase()
+    );
+    console.log('Filtrelenmiş odalar:', projectRooms);
+    
     setSelectedRooms(projectRooms);
     setSelectedProject(project);
     setShowRoomModal(true);
@@ -390,7 +312,7 @@ export default function ReportPage() {
   const handleExportExcel = () => {
     if (!currentCamp) return;
 
-    const campName = currentCamp.name.replace(/\\s+/g, '_');
+    const campName = currentCamp.name.replace(/\s+/g, '_');
     const today = new Date();
     const formattedDate = `${today.getDate().toString().padStart(2, '0')}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getFullYear()}`;
     const fileName = `${campName}_${formattedDate}.xlsx`;
@@ -468,16 +390,11 @@ export default function ReportPage() {
     ws['!merges'].push({ s: { r: 3, c: 5 }, e: { r: 3, c: 6 } });
 
     // Oda Sayısı verileri
-    XLSX.utils.sheet_add_aoa(ws, [
-      [
-        { v: 'Slava 2-3', s: baseStyle },
-        { v: stats.slava23Rooms, t: 'n', s: { ...baseStyle, fill: { fgColor: { rgb: 'D0CECE' } } } }
-      ],
-      [
-        { v: 'Slava 4', s: baseStyle },
-        { v: stats.slava4Rooms, t: 'n', s: { ...baseStyle, fill: { fgColor: { rgb: 'D0CECE' } } } }
-      ]
-    ], { origin: 'F5' });
+    const siteRoomsData = Object.entries(stats.siteStats).map(([siteName, siteData]) => [
+      { v: siteName, s: baseStyle },
+      { v: siteData.rooms, t: 'n', s: { ...baseStyle, fill: { fgColor: { rgb: 'D0CECE' } } } }
+    ]);
+    XLSX.utils.sheet_add_aoa(ws, siteRoomsData, { origin: 'F5' });
 
     // Oda Dolulukları bölümünü ekle
     XLSX.utils.sheet_add_aoa(ws, [[{
@@ -487,19 +404,19 @@ export default function ReportPage() {
     ws['!merges'].push({ s: { r: 3, c: 8 }, e: { r: 3, c: 9 } });
 
     // Şantiye başlıkları
-    XLSX.utils.sheet_add_aoa(ws, [[
-      { v: 'Slava 4', s: { ...headerStyle, alignment: { horizontal: 'center', vertical: 'center' } } },
-      { v: 'Slava 2-3', s: { ...headerStyle, alignment: { horizontal: 'center', vertical: 'center' } } }
-    ]], { origin: 'I5' });
+    const siteHeaders = Object.keys(stats.siteStats).map(siteName => ({
+      v: siteName, 
+      s: { ...headerStyle, alignment: { horizontal: 'center', vertical: 'center' } }
+    }));
+    XLSX.utils.sheet_add_aoa(ws, [siteHeaders], { origin: 'I5' });
 
     // Şantiye toplamları
-    const slava4Total = stats.crossProjectStats['Slava 4']?.totalWorkers || 0;
-    const slava23Total = stats.crossProjectStats['Slava 2-3']?.totalWorkers || 0;
-
-    XLSX.utils.sheet_add_aoa(ws, [[
-      { v: slava4Total, t: 'n', s: { ...baseStyle, fill: { fgColor: { rgb: 'D0CECE' } } } },
-      { v: slava23Total, t: 'n', s: { ...baseStyle, fill: { fgColor: { rgb: 'D0CECE' } } } }
-    ]], { origin: 'I6' });
+    const siteTotals = Object.keys(stats.siteStats).map(siteName => ({
+      v: stats.crossProjectStats[siteName]?.totalWorkers || 0, 
+      t: 'n', 
+      s: { ...baseStyle, fill: { fgColor: { rgb: 'D0CECE' } } }
+    }));
+    XLSX.utils.sheet_add_aoa(ws, [siteTotals], { origin: 'I6' });
 
     // Tablo verilerini hazırla
     const tableData = rooms.map((room: Room, index: number) => {
@@ -514,8 +431,9 @@ export default function ReportPage() {
       const occupiedBeds = roomWorkers.length;
       const availableBeds = room.capacity - occupiedBeds;
       const occupancyRate = (occupiedBeds / room.capacity) * 100;
-      const slava4Workers = roomWorkers.filter((worker: Worker) => worker.project === 'Slava 4').length;
-      const slava23Workers = roomWorkers.filter((worker: Worker) => worker.project === 'Slava 2-3').length;
+      const siteWorkers = Object.keys(stats.siteStats).map(siteName => 
+        roomWorkers.filter((worker: Worker) => worker.project === siteName).length
+      );
 
       return [
         { v: index + 1, t: 'n', s: rowStyle },
@@ -524,9 +442,8 @@ export default function ReportPage() {
         { v: room.capacity, t: 'n', s: rowStyle },
         { v: occupiedBeds, t: 'n', s: rowStyle },
         { v: availableBeds, t: 'n', s: availableBeds > 0 ? { ...rowStyle, fill: { fgColor: { rgb: 'FF0000' } } } : rowStyle },
-        { v: `${occupancyRate.toFixed(0)}%`, s: rowStyle },
-        { v: slava4Workers, t: 'n', s: rowStyle },
-        { v: slava23Workers, t: 'n', s: rowStyle }
+        { v: `${typeof occupancyRate === 'number' && !isNaN(occupancyRate) ? occupancyRate.toFixed(0) : '0'}%`, s: rowStyle },
+        ...siteWorkers.map(workerCount => ({ v: workerCount, t: 'n', s: rowStyle }))
       ];
     });
 
@@ -539,8 +456,7 @@ export default function ReportPage() {
       { v: 'Dolu Yatak', s: headerStyle },
       { v: 'Boş Yatak', s: headerStyle },
       { v: 'Doluluk Oranı', s: headerStyle },
-      { v: 'Slava 4', s: headerStyle },
-      { v: 'Slava 2-3', s: headerStyle }
+      ...Object.keys(stats.siteStats).map(siteName => ({ v: siteName, s: headerStyle }))
     ];
 
     // Tabloyu ekle
@@ -558,9 +474,13 @@ export default function ReportPage() {
       { f: 'SUBTOTAL(9,E10:E28)', t: 'n', s: totalRowStyle },  // Kapasite toplamı
       { f: 'SUBTOTAL(9,F10:F28)', t: 'n', s: totalRowStyle },  // Dolu Yatak toplamı
       { f: 'SUBTOTAL(9,G10:G28)', t: 'n', s: totalRowStyle },  // Boş Yatak toplamı
-      { v: `${((rooms.reduce((sum: number, room: Room) => sum + room.workers.length, 0) / rooms.reduce((sum: number, room: Room) => sum + room.capacity, 0)) * 100).toFixed(0)}%`, s: totalRowStyle },  // Doluluk Oranı - normal hesaplama
-      { f: 'SUBTOTAL(9,I10:I28)', t: 'n', s: totalRowStyle },  // Slava 4 toplamı
-      { f: 'SUBTOTAL(9,J10:J28)', t: 'n', s: totalRowStyle }   // Slava 2-3 toplamı
+      { v: `${((rooms.reduce((sum: number, room: Room) => sum + room.workers.length, 0) / rooms.reduce((sum: number, room: Room) => sum + room.capacity, 0)) * 100) ? 
+        ((rooms.reduce((sum: number, room: Room) => sum + room.workers.length, 0) / rooms.reduce((sum: number, room: Room) => sum + room.capacity, 0)) * 100).toFixed(0) : '0'}%`, s: totalRowStyle },  // Doluluk Oranı - normal hesaplama
+      ...Object.keys(stats.siteStats).map((_, index) => ({ 
+        f: `SUBTOTAL(9,${String.fromCharCode(73 + index)}10:${String.fromCharCode(73 + index)}28)`, 
+        t: 'n', 
+        s: totalRowStyle 
+      }))
     ];
 
     XLSX.utils.sheet_add_aoa(ws, [totalFormulas], { origin: 'B8' });
@@ -767,6 +687,29 @@ export default function ReportPage() {
   return (
     <div className="min-h-screen bg-[url('/arka-plan-guncel-2.jpg')] bg-cover bg-center bg-fixed">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Loading Görünümü */}
+        {loading && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+            <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full mx-4">
+              <div className="flex flex-col items-center space-y-4">
+                <div className="relative">
+                  <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-200"></div>
+                  <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-600 border-t-transparent absolute top-0 left-0"></div>
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900">Raporlar Yükleniyor</h3>
+                <p className="text-sm text-gray-500 text-center">
+                  Kamp verileri ve istatistikler hazırlanıyor, lütfen bekleyin...
+                </p>
+                <div className="flex space-x-1">
+                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Başlık ve Excel İndirme Butonu */}
         <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8">
           <div className="flex justify-between items-center">
@@ -795,7 +738,7 @@ export default function ReportPage() {
           </div>
           <div className="bg-white/90 backdrop-blur-sm p-6 rounded-lg shadow-lg">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Doluluk Oranı</h3>
-            <p className="text-3xl font-bold text-green-600">%{typeof stats.occupancyRate === 'number' ? stats.occupancyRate.toFixed(1) : '0.0'}</p>
+            <p className="text-3xl font-bold text-green-600">%{typeof stats.occupancyRate === 'number' && !isNaN(stats.occupancyRate) ? stats.occupancyRate.toFixed(1) : '0.0'}</p>
             <p className="text-sm text-gray-500 mt-2">Ortalama</p>
           </div>
           <div className="bg-white/90 backdrop-blur-sm p-6 rounded-lg shadow-lg">
@@ -839,14 +782,16 @@ export default function ReportPage() {
                 <Bar data={barData} options={barOptions} />
               </div>
               <div className="flex flex-col justify-center space-y-4">
-                <div className="p-4 bg-blue-50 rounded-lg">
-                  <p className="text-sm font-medium text-blue-700">Slava 4</p>
-                  <p className="text-2xl font-semibold text-blue-900">{stats.slava4Workers}</p>
-                </div>
-                <div className="p-4 bg-indigo-50 rounded-lg">
-                  <p className="text-sm font-medium text-indigo-700">Slava 2-3</p>
-                  <p className="text-2xl font-semibold text-indigo-900">{stats.slava23Workers}</p>
-                </div>
+                {Object.entries(stats.siteStats).map(([siteName, siteData], index) => {
+                  const colors = ['blue', 'indigo', 'purple', 'pink', 'red', 'orange'];
+                  const color = colors[index % colors.length];
+                  return (
+                    <div key={siteName} className={`p-4 bg-${color}-50 rounded-lg`}>
+                      <p className={`text-sm font-medium text-${color}-700`}>{siteName}</p>
+                      <p className={`text-2xl font-semibold text-${color}-900`}>{siteData.workers}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -858,63 +803,50 @@ export default function ReportPage() {
           <div className="bg-white/90 backdrop-blur-sm p-6 rounded-lg shadow-lg">
             <h2 className="text-xl font-semibold text-gray-900 mb-6">Şantiye Bazlı Oda Dağılımı</h2>
             <div className="space-y-6">
-              <div 
-                className="p-4 bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg cursor-pointer hover:shadow-lg transition-all duration-200"
-                onClick={() => handleProjectClick('Slava 4')}
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h3 className="text-lg font-medium text-white">Slava 4</h3>
-                    <p className="text-sm text-blue-100">Toplam {stats.slava4Rooms} Oda</p>
+              {Object.entries(stats.siteStats).map(([siteName, siteData], index) => {
+                const gradients = [
+                  'from-blue-500 to-blue-600',
+                  'from-indigo-500 to-indigo-600',
+                  'from-purple-500 to-purple-600',
+                  'from-pink-500 to-pink-600',
+                  'from-red-500 to-red-600',
+                  'from-orange-500 to-orange-600'
+                ];
+                const gradient = gradients[index % gradients.length];
+                const borderColor = gradient.split('-')[1]; // blue, indigo, etc.
+                
+                return (
+                  <div 
+                    key={siteName}
+                    className={`p-4 bg-gradient-to-r ${gradient} rounded-lg cursor-pointer hover:shadow-lg transition-all duration-200`}
+                    onClick={() => handleProjectClick(siteName)}
+                  >
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-lg font-medium text-white">{siteName}</h3>
+                        <p className={`text-sm text-${borderColor}-100`}>Toplam {siteData.rooms} Oda</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold text-white">
+                          {typeof siteData.occupancyRate === 'number' && !isNaN(siteData.occupancyRate) ? 
+                            siteData.occupancyRate.toFixed(1) : '0.0'}%
+                        </p>
+                        <p className={`text-sm text-${borderColor}-100`}>Doluluk</p>
+                      </div>
+                    </div>
+                    <div className={`mt-4 pt-4 border-t border-${borderColor}-400 border-opacity-30`}>
+                      <div className="flex justify-between items-center text-white">
+                        <p className="text-sm opacity-90">Toplam İşçi</p>
+                        <p className="text-lg font-semibold">{stats.crossProjectStats[siteName]?.totalWorkers || 0} Kişi</p>
+                      </div>
+                      <div className="flex justify-between items-center text-white mt-2">
+                        <p className="text-sm opacity-90">Farklı Projede Çalışan</p>
+                        <p className="text-lg font-semibold">{stats.crossProjectStats[siteName]?.otherProjectWorkers || 0} Kişi</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-white">
-                      {stats.projectDistribution['Slava 4']?.occupancyRate ? 
-                        stats.projectDistribution['Slava 4'].occupancyRate.toFixed(1) : '0.0'}%
-                    </p>
-                    <p className="text-sm text-blue-100">Doluluk</p>
-                  </div>
-                </div>
-                <div className="mt-4 pt-4 border-t border-blue-400 border-opacity-30">
-                  <div className="flex justify-between items-center text-white">
-                    <p className="text-sm opacity-90">Toplam İşçi</p>
-                    <p className="text-lg font-semibold">{stats.crossProjectStats['Slava 4']?.totalWorkers || 0} Kişi</p>
-                  </div>
-                  <div className="flex justify-between items-center text-white mt-2">
-                    <p className="text-sm opacity-90">Farklı Projede Çalışan</p>
-                    <p className="text-lg font-semibold">{stats.crossProjectStats['Slava 4']?.otherProjectWorkers || 0} Kişi</p>
-                  </div>
-                </div>
-              </div>
-
-              <div 
-                className="p-4 bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-lg cursor-pointer hover:shadow-lg transition-all duration-200"
-                onClick={() => handleProjectClick('Slava 2-3')}
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h3 className="text-lg font-medium text-white">Slava 2-3</h3>
-                    <p className="text-sm text-indigo-100">Toplam {stats.slava23Rooms} Oda</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-white">
-                      {stats.projectDistribution['Slava 2-3']?.occupancyRate ? 
-                        stats.projectDistribution['Slava 2-3'].occupancyRate.toFixed(1) : '0.0'}%
-                    </p>
-                    <p className="text-sm text-indigo-100">Doluluk</p>
-                  </div>
-                </div>
-                <div className="mt-4 pt-4 border-t border-indigo-400 border-opacity-30">
-                  <div className="flex justify-between items-center text-white">
-                    <p className="text-sm opacity-90">Toplam İşçi</p>
-                    <p className="text-lg font-semibold">{stats.crossProjectStats['Slava 2-3']?.totalWorkers || 0} Kişi</p>
-                  </div>
-                  <div className="flex justify-between items-center text-white mt-2">
-                    <p className="text-sm opacity-90">Farklı Projede Çalışan</p>
-                    <p className="text-lg font-semibold">{stats.crossProjectStats['Slava 2-3']?.otherProjectWorkers || 0} Kişi</p>
-                  </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
 
@@ -926,7 +858,7 @@ export default function ReportPage() {
                 <div className="p-4 bg-purple-50 rounded-lg">
                   <p className="text-sm font-medium text-purple-700">Ortalama Doluluk</p>
                   <p className="text-2xl font-semibold text-purple-900">
-                    {stats.averageOccupancyPerRoom.toFixed(1)}
+                    {typeof stats.averageOccupancyPerRoom === 'number' && !isNaN(stats.averageOccupancyPerRoom) ? stats.averageOccupancyPerRoom.toFixed(1) : '0.0'}
                   </p>
                   <p className="text-sm text-purple-600">Kişi/Oda</p>
                 </div>
@@ -993,7 +925,7 @@ export default function ReportPage() {
                         {room.workers.length}/{room.capacity}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        %{((room.workers.length / room.capacity) * 100).toFixed(1)}
+                        %{((room.workers.length / room.capacity) * 100) ? ((room.workers.length / room.capacity) * 100).toFixed(1) : '0.0'}
                       </td>
                     </tr>
                   ))}
@@ -1012,7 +944,9 @@ export default function ReportPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       %{(selectedRooms.reduce((sum, room) => sum + room.workers.length, 0) / 
-                         selectedRooms.reduce((sum, room) => sum + room.capacity, 0) * 100).toFixed(1)}
+                         selectedRooms.reduce((sum, room) => sum + room.capacity, 0) * 100) ? 
+                         (selectedRooms.reduce((sum, room) => sum + room.workers.length, 0) / 
+                          selectedRooms.reduce((sum, room) => sum + room.capacity, 0) * 100).toFixed(1) : '0.0'}
                     </td>
                   </tr>
                 </tfoot>

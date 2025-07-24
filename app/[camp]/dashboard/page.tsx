@@ -134,7 +134,7 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
                 <h3 className="text-lg font-medium text-gray-900">Doluluk Oranı</h3>
                 <FaChartPie className="text-orange-600 text-2xl" />
               </div>
-              <p className="mt-2 text-3xl font-semibold text-orange-600">%{stats.occupancyRate.toFixed(1)}</p>
+              <p className="mt-2 text-3xl font-semibold text-orange-600">%{typeof stats.occupancyRate === 'number' && !isNaN(stats.occupancyRate) ? stats.occupancyRate.toFixed(1) : '0.0'}</p>
             </div>
           </div>
         </div>

@@ -12,6 +12,32 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Şifre zorunludur']
   },
+  role: {
+    type: String,
+    enum: ['kurucu_admin', 'merkez_admin', 'santiye_admin', 'user'],
+    default: 'user',
+    required: true
+  },
+  site: {
+    type: String,
+    required: false
+  },
+  siteAccessApproved: {
+    type: Boolean,
+    default: false
+  },
+  sitePermissions: {
+    type: Object,
+    default: {
+      canViewCamps: false,
+      canEditCamps: false,
+      canCreateCamps: false
+    }
+  },
+  isApproved: {
+    type: Boolean,
+    default: false
+  },
   camps: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Camp'

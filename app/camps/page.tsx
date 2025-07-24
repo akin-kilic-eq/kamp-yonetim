@@ -15,6 +15,27 @@ interface Camp {
     read?: string;
     write?: string;
   };
+  creatorSite?: string; // Yeni eklenen alan
+  site?: string; // Kampın şantiye bilgisi
+}
+
+interface SiteStats {
+  totalWorkers: number;
+  totalBeds: number;
+  occupiedBeds: number;
+  availableBeds: number;
+  occupancyRate: number;
+  campCount: number;
+}
+
+interface OverallStats {
+  totalWorkers: number;
+  totalBeds: number;
+  occupiedBeds: number;
+  availableBeds: number;
+  occupancyRate: number;
+  totalCamps: number;
+  totalSites: number;
 }
 
 export default function CampsPage() {
@@ -32,10 +53,20 @@ export default function CampsPage() {
     description: ''
   });
   const [joinCampCode, setJoinCampCode] = useState('');
-  const [currentUser, setCurrentUser] = useState<{ email: string; camps: string[] } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email: string; camps: string[]; role: string; site?: string } | null>(null);
   const [error, setError] = useState('');
   const [generatedCodes, setGeneratedCodes] = useState<{ read: string; write: string } | null>(null);
   const [copiedCodeType, setCopiedCodeType] = useState<'read' | 'write' | null>(null);
+  const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
+  
+  // Yeni state'ler
+  const [overallStats, setOverallStats] = useState<OverallStats | null>(null);
+  const [siteStats, setSiteStats] = useState<Record<string, SiteStats>>({});
+  const [expandedStats, setExpandedStats] = useState(false);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [userPermissions, setUserPermissions] = useState<{ siteAccessApproved?: boolean; sitePermissions?: { canViewCamps?: boolean; canEditCamps?: boolean; canCreateCamps?: boolean } } | null>(null);
+  const [showPermissionUpdate, setShowPermissionUpdate] = useState(false);
+  const [pendingAccessCount, setPendingAccessCount] = useState<number>(0);
 
   useEffect(() => {
     // Oturum kontrolü
@@ -46,19 +77,155 @@ export default function CampsPage() {
     }
     const user = JSON.parse(userSession);
     setCurrentUser(user);
+    
+    // Kullanıcı yetkilerini çek
+    const fetchUserPermissions = () => {
+      fetch(`/api/users?email=${user.email}`)
+        .then(res => res.json())
+        .then(data => {
+          // Eğer tek kullanıcı dönerse
+          const me = Array.isArray(data) ? data.find((u:any) => u.email === user.email) : data;
+          const newPermissions = {
+            siteAccessApproved: me?.siteAccessApproved,
+            sitePermissions: me?.sitePermissions
+          };
+          
+          // Yetkiler değiştiyse session'ı güncelle
+          const currentSession = sessionStorage.getItem('currentUser');
+          if (currentSession) {
+            const currentUser = JSON.parse(currentSession);
+            if (currentUser.siteAccessApproved !== newPermissions.siteAccessApproved ||
+                JSON.stringify(currentUser.sitePermissions) !== JSON.stringify(newPermissions.sitePermissions)) {
+              
+              const updatedUser = {
+                ...currentUser,
+                siteAccessApproved: newPermissions.siteAccessApproved,
+                sitePermissions: newPermissions.sitePermissions
+              };
+              sessionStorage.setItem('currentUser', JSON.stringify(updatedUser));
+              
+              // Kullanıcıya bilgi ver
+              console.log('Yetkileriniz güncellendi!');
+              setShowPermissionUpdate(true);
+              setTimeout(() => setShowPermissionUpdate(false), 5000); // 5 saniye sonra gizle
+            }
+          }
+          
+          setUserPermissions(newPermissions);
+        })
+        .catch(() => setUserPermissions(null));
+    };
+    
+    fetchUserPermissions();
     loadCamps(user.email);
+    
+    // Her 30 saniyede bir yetkileri kontrol et (sadece user rolündeki kullanıcılar için)
+    if (user.role === 'user') {
+      const interval = setInterval(fetchUserPermissions, 30000); // 30 saniye
+      return () => clearInterval(interval);
+    }
+
+    // Şantiye admini ise bekleyen kullanıcı sayısını çek
+    if (user.role === 'santiye_admin') {
+      fetch(`/api/users?pendingCount=true&email=${user.email}`)
+        .then(res => res.json())
+        .then(data => {
+          if (typeof data.count === 'number') setPendingAccessCount(data.count);
+        })
+        .catch(err => {
+          console.error('Bekleyen kullanıcı sayısı çekilirken hata:', err);
+        });
+    }
   }, [router]);
 
   const loadCamps = async (email: string) => {
     try {
-      const response = await getCamps(email);
+      const userStr = sessionStorage.getItem('currentUser');
+      const user = JSON.parse(userStr || '{}');
+      const response = await getCamps(email, user.role);
       if (response.error) {
         setError(response.error);
         return;
       }
       setCamps(response);
+      
+      // Admin kullanıcılar için istatistikleri yükle
+      if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+        loadStats(response);
+      }
     } catch (error) {
       setError('Kamplar yüklenirken bir hata oluştu');
+    }
+  };
+
+  // İstatistikleri yükle
+  const loadStats = async (campsData: Camp[]) => {
+    setLoadingStats(true);
+    try {
+      const stats: Record<string, SiteStats> = {};
+      let totalWorkers = 0;
+      let totalBeds = 0;
+      let occupiedBeds = 0;
+
+      // Her kamp için istatistikleri çek
+      for (const camp of campsData) {
+        try {
+          const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
+          const campStats = await response.json();
+          
+          if (campStats && !campStats.error) {
+            const site = camp.creatorSite || 'Şantiye Belirtilmemiş';
+            
+            if (!stats[site]) {
+              stats[site] = {
+                totalWorkers: 0,
+                totalBeds: 0, // totalBeds -> totalCapacity
+                occupiedBeds: 0, // occupiedBeds -> totalWorkers
+                availableBeds: 0,
+                occupancyRate: 0,
+                campCount: 0
+              };
+            }
+            
+            stats[site].totalWorkers += campStats.totalWorkers || 0;
+            stats[site].totalBeds += campStats.totalCapacity || 0;
+            stats[site].occupiedBeds += campStats.totalWorkers || 0;
+            stats[site].campCount += 1;
+            
+            totalWorkers += campStats.totalWorkers || 0;
+            totalBeds += campStats.totalCapacity || 0;
+            occupiedBeds += campStats.totalWorkers || 0;
+          }
+        } catch (error) {
+          console.error(`Kamp ${camp._id} istatistikleri yüklenemedi:`, error);
+        }
+      }
+
+      // Şantiye bazında doluluk oranlarını hesapla
+      Object.keys(stats).forEach(site => {
+        stats[site].availableBeds = stats[site].totalBeds - stats[site].occupiedBeds;
+        stats[site].occupancyRate = stats[site].totalBeds > 0 
+          ? Math.round((stats[site].occupiedBeds / stats[site].totalBeds) * 100) 
+          : 0;
+      });
+
+      // Genel istatistikleri hesapla
+      const overall: OverallStats = {
+        totalWorkers,
+        totalBeds,
+        occupiedBeds,
+        availableBeds: totalBeds - occupiedBeds,
+        occupancyRate: totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0,
+        totalCamps: campsData.length,
+        totalSites: Object.keys(stats).length
+      };
+
+      setSiteStats(stats);
+      setOverallStats(overall);
+    } catch (error) {
+      console.error('İstatistikler yüklenirken hata:', error);
+    } finally {
+      setLoadingStats(false);
     }
   };
 
@@ -149,36 +316,70 @@ export default function CampsPage() {
     }
   };
 
-  const handleCampClick = (camp: Camp) => {
+  const handleCampClick = async (camp: Camp) => {
     if (!currentUser) {
       router.push('/login');
       return;
     }
 
-    // URL'yi oluştur
-    const formattedName = camp.name.toLowerCase()
-      .replace(/ğ/g, 'g')
-      .replace(/ü/g, 'u')
-      .replace(/ş/g, 's')
-      .replace(/ı/g, 'i')
-      .replace(/ö/g, 'o')
-      .replace(/ç/g, 'c')
-      .replace(/\s+/g, '');
+    try {
+      // Kampın tam bilgilerini API'den al
+      const response = await fetch(`/api/camps/${camp._id}`);
+      const campData = await response.json();
+      
+      console.log('Kamp seçildi:', {
+        campId: camp._id,
+        campName: camp.name,
+        campData: campData,
+        currentUser: currentUser
+      });
+      
+      if (campData.error) {
+        console.error('Kamp bilgileri alınamadı:', campData.error);
+        // Hata durumunda mevcut kamp bilgilerini kullan
+        localStorage.setItem('currentCamp', JSON.stringify(camp));
+      } else {
+        // Tam kamp bilgilerini localStorage'a kaydet
+        localStorage.setItem('currentCamp', JSON.stringify(campData));
+      }
 
-    // Kampı localStorage'a kaydet
-    localStorage.setItem('currentCamp', JSON.stringify(camp));
-    
-    // Yönlendirme yap
-    router.push(`/${formattedName}/dashboard`);
+      // URL'yi oluştur
+      const formattedName = camp.name.toLowerCase()
+        .replace(/ğ/g, 'g')
+        .replace(/ü/g, 'u')
+        .replace(/ş/g, 's')
+        .replace(/ı/g, 'i')
+        .replace(/ö/g, 'o')
+        .replace(/ç/g, 'c')
+        .replace(/\s+/g, '');
+
+      // Yönlendirme yap
+      router.push(`/${formattedName}/dashboard`);
+    } catch (error) {
+      console.error('Kamp bilgileri alınırken hata:', error);
+      // Hata durumunda mevcut kamp bilgilerini kullan
+      localStorage.setItem('currentCamp', JSON.stringify(camp));
+      
+      const formattedName = camp.name.toLowerCase()
+        .replace(/ğ/g, 'g')
+        .replace(/ü/g, 'u')
+        .replace(/ş/g, 's')
+        .replace(/ı/g, 'i')
+        .replace(/ö/g, 'o')
+        .replace(/ç/g, 'c')
+        .replace(/\s+/g, '');
+      
+      router.push(`/${formattedName}/dashboard`);
+    }
   };
 
   const handleEditCamp = async () => {
-    if (!selectedCamp || !selectedCamp.name) {
+    if (!selectedCamp || !selectedCamp.name || !currentUser?.email) {
       setError('Lütfen kamp adını girin');
       return;
     }
     try {
-      const response = await updateCamp(selectedCamp);
+      const response = await updateCamp(selectedCamp, currentUser.email);
       if (response.error) {
         setError(response.error);
         return;
@@ -193,9 +394,9 @@ export default function CampsPage() {
   };
 
   const handleDeleteCamp = async () => {
-    if (!selectedCamp) return;
+    if (!selectedCamp || !currentUser?.email) return;
     try {
-      const response = await deleteCamp(selectedCamp._id);
+      const response = await deleteCamp(selectedCamp._id, currentUser.email);
       if (response.error) {
         setError(response.error);
         return;
@@ -250,6 +451,74 @@ export default function CampsPage() {
   // Kullanıcının bir kampın sahibi mi yoksa paylaşılan kullanıcısı mı olduğunu kontrol et
   const isCampOwner = (camp: Camp) => currentUser?.email === camp.userEmail;
   const isSharedUser = (camp: Camp) => camp.sharedWith?.some(shared => shared.email === currentUser?.email);
+  const isAdminUser = currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin';
+  
+  // Şantiye admini için kendi şantiyesindeki kampları düzenleyebilme kontrolü
+  const canEditCamp = (camp: Camp) => {
+    if (isCampOwner(camp) || isAdminUser) {
+      return true;
+    }
+    
+    // Şantiye admini kendi şantiyesindeki user'ların kamplarını düzenleyebilir
+    if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+      // Kamp sahibinin şantiye bilgisini kontrol et (backend'de yapılan kontrolle aynı mantık)
+      return true; // Backend'de zaten kontrol ediliyor, frontend'de de göster
+    }
+    
+    // User rolündeki kullanıcılar için şantiye erişim yetkisi ve düzenleme izni kontrolü
+    if (currentUser?.role === 'user') {
+      // Kendi kampında tam yetki
+      if (isCampOwner(camp)) {
+        return true;
+      }
+      
+      // Şantiye erişim yetkisi ve düzenleme izni varsa, aynı şantiyedeki diğer kamplarda düzenleme yapabilir
+      if (userPermissions?.siteAccessApproved && 
+          userPermissions?.sitePermissions?.canEditCamps && 
+          currentUser?.site && 
+          camp.site === currentUser?.site) {
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
+  // Kullanıcı erişim ve yetki kontrolü
+  const hasAccess =
+    currentUser?.role === 'kurucu_admin' ||
+    currentUser?.role === 'merkez_admin' ||
+    currentUser?.role === 'santiye_admin' ||
+    (userPermissions?.siteAccessApproved && userPermissions?.sitePermissions?.canViewCamps);
+  const canCreate =
+    currentUser?.role === 'kurucu_admin' ||
+    currentUser?.role === 'merkez_admin' ||
+    currentUser?.role === 'santiye_admin' ||
+    userPermissions?.sitePermissions?.canCreateCamps;
+
+  // Admin kullanıcılar için şantiye bazında gruplandırma
+  const groupedCamps = isAdminUser ? camps.reduce((groups, camp) => {
+    const site = camp.creatorSite || 'Şantiye Belirtilmemiş';
+    if (!groups[site]) {
+      groups[site] = [];
+    }
+    groups[site].push(camp);
+    return groups;
+  }, {} as Record<string, Camp[]>) : {};
+
+  // Şantiyeleri alfabetik sırala
+  const sortedSites = Object.keys(groupedCamps).sort();
+
+  // Şantiye açma/kapama fonksiyonu
+  const toggleSite = (site: string) => {
+    const newExpandedSites = new Set(expandedSites);
+    if (newExpandedSites.has(site)) {
+      newExpandedSites.delete(site);
+    } else {
+      newExpandedSites.add(site);
+    }
+    setExpandedSites(newExpandedSites);
+  };
 
   return (
     <div
@@ -258,34 +527,81 @@ export default function CampsPage() {
     >
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Yetki güncelleme bildirimi */}
+        {showPermissionUpdate && (
+          <div className="mb-6 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-lg">
+            <div className="flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+              <span className="font-semibold">Yetkileriniz güncellendi! Sayfa otomatik olarak yenileniyor...</span>
+            </div>
+          </div>
+        )}
+        {/* Şantiye admini için özel panel erişim kutusu */}
+        {currentUser?.role === 'santiye_admin' && (
+          <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 mb-6 rounded flex items-center justify-between">
+            <div>
+              <div className="font-bold text-lg mb-1">Şantiye Admini Paneli</div>
+              <div className="text-sm">Şantiye yönetimi ve gelişmiş işlemler için admin paneline erişebilirsiniz.</div>
+            </div>
+            <button
+              onClick={() => router.push('/santiye-admin-paneli')}
+              className="ml-6 px-5 py-2 rounded bg-yellow-500 hover:bg-yellow-600 text-white font-semibold shadow transition-all duration-200 relative flex items-center"
+            >
+              Şantiye Admini Paneline Git
+              {pendingAccessCount > 0 && (
+                <span className="ml-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold absolute -top-2 -right-2 border-2 border-white shadow">
+                  {pendingAccessCount}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
         <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Kamplarım</h1>
-              <p className="text-gray-600">Yönettiğiniz kampların listesi</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {isAdminUser ? 'Tüm Kamplar' : 'Kamplarım'}
+              </h1>
+              <p className="text-gray-600">
+                {isAdminUser ? 'Sistemdeki tüm kampların listesi' : 'Yönettiğiniz kampların listesi'}
+              </p>
             </div>
             <div className="flex space-x-4">
-              <button
-                onClick={() => setShowJoinModal(true)}
-                className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200"
-              >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                </svg>
-                Mevcut Kamp Ekle
-              </button>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200"
-              >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Yeni Kamp Ekle
-              </button>
+              {hasAccess && (!isAdminUser || currentUser?.role === 'kurucu_admin') && (
+                <>
+                  <button
+                    onClick={() => setShowJoinModal(true)}
+                    className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200"
+                  >
+                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                    </svg>
+                    Mevcut Kamp Ekle
+                  </button>
+                  {canCreate && (
+                    <button
+                      onClick={() => setShowAddModal(true)}
+                      className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200"
+                    >
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Yeni Kamp Ekle
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
+
+        {!hasAccess && (
+          <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-6 mb-8 rounded text-center text-lg font-semibold">
+            Şantiye admini tarafından erişim onayınız veya kamp görüntüleme yetkiniz bulunmamaktadır. Lütfen şantiye admini ile iletişime geçin.
+          </div>
+        )}
 
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
@@ -293,60 +609,266 @@ export default function CampsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-          {camps.map((camp) => (
-            <div
-              key={camp._id}
-              className="bg-white/90 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl transition-all duration-300"
-            >
-              <div className="p-6">
-                <div className="flex justify-between items-start">
-                  <h2 className="text-2xl font-bold text-gray-800 mb-2">{camp.name}</h2>
-                  <div className="flex items-center space-x-3">
-                    {/* Kamp sahibi için butonlar */}
-                    {isCampOwner(camp) && (
-                      <>
-                        <button onClick={() => { setSelectedCamp(camp); setShowEditModal(true); }} className="text-blue-500 hover:text-blue-700 transition-colors">
-                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L14.732 3.732z" /></svg>
-                        </button>
-                        <button onClick={() => { setSelectedCamp(camp); setShowDeleteModal(true); }} className="text-red-500 hover:text-red-700 transition-colors">
-                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                        <button onClick={() => openShareModal(camp)} className="text-gray-500 hover:text-gray-700 transition-colors">
-                           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        </button>
-                      </>
-                    )}
-                    {/* Paylaşılan kullanıcı için Paylaşımdan Çıkar butonu */}
-                    {isSharedUser(camp) && (
-                      <button 
-                        onClick={() => { setSelectedCamp(camp); setShowLeaveModal(true); }} 
-                        className="text-orange-500 hover:text-orange-700 transition-colors"
-                        title="Paylaşımdan Çıkar"
-                      >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                      </button>
-                    )}
+        {/* Admin kullanıcılar için özet istatistikler */}
+        {isAdminUser && (
+          loadingStats ? (
+            <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-8 mb-8 flex flex-col items-center justify-center min-h-[180px]">
+              <svg className="animate-spin h-8 w-8 text-blue-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+              </svg>
+              <span className="text-blue-700 font-semibold text-lg">Yükleniyor...</span>
+            </div>
+          ) : (
+            overallStats && (
+              <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-6 mb-8">
+                {/* Kümülatif özet */}
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center">
+                    <svg className="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    Genel Özet
+                  </h2>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                      <div className="text-2xl font-bold text-blue-600">{overallStats.totalWorkers}</div>
+                      <div className="text-sm text-blue-700">Toplam İşçi</div>
+                    </div>
+                    <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                      <div className="text-2xl font-bold text-green-600">{overallStats.totalBeds}</div>
+                      <div className="text-sm text-green-700">Toplam Yatak</div>
+                    </div>
+                    <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+                      <div className="text-2xl font-bold text-yellow-600">{overallStats.availableBeds}</div>
+                      <div className="text-sm text-yellow-700">Boş Yatak</div>
+                    </div>
+                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                      <div className="text-2xl font-bold text-purple-600">%{overallStats.occupancyRate}</div>
+                      <div className="text-sm text-purple-700">Doluluk Oranı</div>
+                    </div>
                   </div>
                 </div>
-                <p className="text-gray-600 mb-4 h-12 overflow-hidden">{camp.description}</p>
-                <div 
-                  onClick={() => handleCampClick(camp)}
-                  className="mt-4 flex justify-end cursor-pointer"
-                >
-                  <span className="inline-flex items-center text-sm text-blue-600 hover:text-blue-700">
-                    Yönetim Paneline Git
-                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </span>
+
+                {/* Şantiye bazlı özet - açılır/kapanır */}
+                <div>
+                  <div 
+                    onClick={() => setExpandedStats(!expandedStats)}
+                    className="cursor-pointer hover:bg-gray-50 p-4 rounded-lg transition-colors duration-200"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xl font-bold text-gray-800 flex items-center">
+                        <svg className="w-5 h-5 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                        Şantiye Bazlı Özet ({overallStats.totalSites} şantiye)
+                      </h3>
+                      <svg 
+                        className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
+                          expandedStats ? 'rotate-180' : ''
+                        }`} 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+                  
+                  {expandedStats && (
+                    <div className="mt-4 space-y-4">
+                      {Object.keys(siteStats).sort().map((site) => (
+                        <div key={site} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                          <h4 className="font-bold text-gray-800 mb-2">{site}</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                            <div>
+                              <span className="text-gray-600">İşçi:</span>
+                              <span className="font-semibold ml-1">{siteStats[site].totalWorkers}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Yatak:</span>
+                              <span className="font-semibold ml-1">{siteStats[site].totalBeds}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Boş:</span>
+                              <span className="font-semibold ml-1">{siteStats[site].availableBeds}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Doluluk:</span>
+                              <span className="font-semibold ml-1">%{siteStats[site].occupancyRate}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Kamp:</span>
+                              <span className="font-semibold ml-1">{siteStats[site].campCount}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            )
+          )
+        )}
+
+        {/* Admin kullanıcılar için şantiye bazında gruplandırılmış görünüm */}
+        {isAdminUser ? (
+          <div className="space-y-4">
+            {sortedSites.map((site) => (
+              <div key={site} className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg overflow-hidden">
+                {/* Şantiye başlığı - tıklanabilir */}
+                <div 
+                  onClick={() => toggleSite(site)}
+                  className="p-6 cursor-pointer hover:bg-gray-50 transition-colors duration-200"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <svg className="w-6 h-6 mr-3 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                      </svg>
+                      <h2 className="text-2xl font-bold text-gray-800">{site}</h2>
+                      <span className="ml-3 text-sm font-normal text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                        {groupedCamps[site].length} kamp
+                      </span>
+                    </div>
+                    {/* Açma/kapama ikonu */}
+                    <svg 
+                      className={`w-6 h-6 text-gray-500 transition-transform duration-200 ${
+                        expandedSites.has(site) ? 'rotate-180' : ''
+                      }`} 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+                
+                {/* Kamplar - açılır/kapanır */}
+                {expandedSites.has(site) && (
+                  <div className="px-6 pb-6">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                      {groupedCamps[site].map((camp) => (
+                        <div
+                          key={camp._id}
+                          className="bg-white/80 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl transition-all duration-300 border border-gray-200"
+                        >
+                          <div className="p-6">
+                            <div className="flex justify-between items-start">
+                              <h3 className="text-xl font-bold text-gray-800 mb-2">{camp.name}</h3>
+                              <div className="flex items-center space-x-2">
+                                                      {/* Kamp sahibi, admin veya şantiye admini için butonlar */}
+                      {canEditCamp(camp) && (
+                                  <>
+                                    <button onClick={() => { setSelectedCamp(camp); setShowEditModal(true); }} className="text-blue-500 hover:text-blue-700 transition-colors">
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L14.732 3.732z" /></svg>
+                                    </button>
+                                    <button onClick={() => { setSelectedCamp(camp); setShowDeleteModal(true); }} className="text-red-500 hover:text-red-700 transition-colors">
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    </button>
+                                    <button onClick={() => openShareModal(camp)} className="text-gray-500 hover:text-gray-700 transition-colors">
+                                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    </button>
+                                  </>
+                                )}
+                                {/* Paylaşılan kullanıcı için Paylaşımdan Çıkar butonu */}
+                                {isSharedUser(camp) && (
+                                  <button 
+                                    onClick={() => { setSelectedCamp(camp); setShowLeaveModal(true); }} 
+                                    className="text-orange-500 hover:text-orange-700 transition-colors"
+                                    title="Paylaşımdan Çıkar"
+                                  >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <p className="text-gray-600 mb-3 h-12 overflow-hidden">{camp.description}</p>
+                            <div className="text-sm text-gray-500 mb-4">
+                              <span className="font-medium">Oluşturan:</span> {camp.userEmail}
+                            </div>
+                            <div 
+                              onClick={() => handleCampClick(camp)}
+                              className="mt-4 flex justify-end cursor-pointer"
+                            >
+                              <span className="inline-flex items-center text-sm text-blue-600 hover:text-blue-700">
+                                Yönetim Paneline Git
+                                <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* Normal kullanıcılar için mevcut görünüm */
+          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {camps.map((camp) => (
+              <div
+                key={camp._id}
+                className="bg-white/90 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl transition-all duration-300"
+              >
+                <div className="p-6">
+                  <div className="flex justify-between items-start">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">{camp.name}</h2>
+                    <div className="flex items-center space-x-3">
+                                          {/* Kamp sahibi, admin veya şantiye admini için butonlar */}
+                    {canEditCamp(camp) && (
+                        <>
+                          <button onClick={() => { setSelectedCamp(camp); setShowEditModal(true); }} className="text-blue-500 hover:text-blue-700 transition-colors">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L14.732 3.732z" /></svg>
+                          </button>
+                          <button onClick={() => { setSelectedCamp(camp); setShowDeleteModal(true); }} className="text-red-500 hover:text-red-700 transition-colors">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                          <button onClick={() => openShareModal(camp)} className="text-gray-500 hover:text-gray-700 transition-colors">
+                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          </button>
+                        </>
+                      )}
+                      {/* Paylaşılan kullanıcı için Paylaşımdan Çıkar butonu */}
+                      {isSharedUser(camp) && (
+                        <button 
+                          onClick={() => { setSelectedCamp(camp); setShowLeaveModal(true); }} 
+                          className="text-orange-500 hover:text-orange-700 transition-colors"
+                          title="Paylaşımdan Çıkar"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-gray-600 mb-4 h-12 overflow-hidden">{camp.description}</p>
+                  <div 
+                    onClick={() => handleCampClick(camp)}
+                    className="mt-4 flex justify-end cursor-pointer"
+                  >
+                    <span className="inline-flex items-center text-sm text-blue-600 hover:text-blue-700">
+                      Yönetim Paneline Git
+                      <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Paylaşımdan Çıkma Onay Modalı */}
         {showLeaveModal && selectedCamp && (

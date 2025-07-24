@@ -32,10 +32,36 @@ interface CampStats {
   occupancyRate: number;
 }
 
+interface Camp {
+  _id: string;
+  name: string;
+  description: string;
+  userEmail: string;
+  site?: string;
+  isPublic?: boolean;
+  sharedWithSites?: string[];
+}
+
+interface Site {
+  _id: string;
+  name: string;
+  description?: string;
+}
+
+interface SiteStats {
+  [key: string]: {
+    rooms: number;
+    capacity: number;
+    workers: number;
+    occupancyRate: number;
+  };
+}
+
 export default function ReportsPage() {
   const router = useRouter();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [campStats, setCampStats] = useState<CampStats[]>([]);
+  const [siteStats, setSiteStats] = useState<SiteStats>({});
   const [totalStats, setTotalStats] = useState({
     totalRooms: 0,
     totalCapacity: 0,
@@ -43,32 +69,125 @@ export default function ReportsPage() {
     availableBeds: 0,
     occupancyRate: 0,
   });
+  const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedRooms = localStorage.getItem('rooms');
-    if (savedRooms) {
-      const parsedRooms = JSON.parse(savedRooms);
-      setRooms(parsedRooms);
-      calculateStats(parsedRooms);
-    }
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        
+        // Kamp bilgilerini al
+        const campData = localStorage.getItem('currentCamp');
+        if (campData) {
+          const camp = JSON.parse(campData) as Camp;
+          setCurrentCamp(camp);
+          
+          // Şantiyeleri getir
+          const sitesResponse = await fetch('/api/sites');
+          const sitesData = await sitesResponse.json();
+          setSites(sitesData);
+          
+          // Kamp ortak kullanım ayarlarına göre şantiyeleri belirle
+          let availableSites: Site[] = [];
+          
+          console.log('Kamp bilgileri:', camp);
+          console.log('Tüm şantiyeler:', sitesData);
+          
+          if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
+            // Ortak kullanım açıksa, paylaşılan şantiyeler + kampın kendi şantiyesi
+            availableSites = sitesData.filter((site: Site) => 
+              site.name === camp.site || camp.sharedWithSites!.includes(site._id)
+            );
+            console.log('Ortak kullanım açık, kullanılabilir şantiyeler:', availableSites);
+          } else {
+            // Ortak kullanım kapalıysa, sadece kampın kendi şantiyesi
+            const campSite = sitesData.find((site: Site) => site.name === camp.site);
+            if (campSite) {
+              availableSites = [campSite];
+            }
+            console.log('Ortak kullanım kapalı, kamp şantiyesi:', campSite);
+          }
+          
+          // Kamp ortak kullanım ayarlarına göre odaları getir
+          const roomsResponse = await fetch(`/api/rooms?campId=${camp._id}`);
+          const allRooms = await roomsResponse.json();
+          
+          console.log('Tüm odalar:', allRooms);
+          
+          // Sadece mevcut şantiyelerin odalarını filtrele
+          const filteredRooms = allRooms.filter((room: any) => 
+            availableSites.some(site => site.name === room.project)
+          );
+          
+          console.log('Filtrelenmiş odalar:', filteredRooms);
+          
+          setRooms(filteredRooms);
+          
+          // Şantiye bazlı istatistikleri hesapla
+          const siteStatsData: SiteStats = {};
+          availableSites.forEach(site => {
+            siteStatsData[site.name] = { rooms: 0, capacity: 0, workers: 0, occupancyRate: 0 };
+          });
+          
+          filteredRooms.forEach((room: any) => {
+            if (siteStatsData[room.project]) {
+              siteStatsData[room.project].rooms += 1;
+              siteStatsData[room.project].capacity += room.capacity;
+              siteStatsData[room.project].workers += (room.workers?.length || 0);
+            }
+          });
+          
+          // Doluluk oranlarını hesapla
+          Object.keys(siteStatsData).forEach(siteName => {
+            if (siteStatsData[siteName].capacity > 0) {
+              siteStatsData[siteName].occupancyRate = (siteStatsData[siteName].workers / siteStatsData[siteName].capacity) * 100;
+            }
+          });
+          
+          setSiteStats(siteStatsData);
+          calculateStats(filteredRooms, camp, sitesData);
+        }
+      } catch (error) {
+        console.error('Veriler yüklenirken hata:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadData();
   }, []);
 
-  const calculateStats = (rooms: Room[]) => {
-    // Kamp projelerini belirle
-    const projects = ['Slava 4', 'Slava 2-3'];
+  const calculateStats = (rooms: Room[], camp: Camp, sites: Site[]) => {
+    // Kamp ortak kullanım ayarlarına göre şantiyeleri belirle
+    let availableSites: Site[] = [];
     
-    // Her kamp için istatistikleri hesapla
-    const stats = projects.map(project => {
-      const campRooms = rooms.filter(room => room.project === project.split(' ')[1]);
-      const totalRooms = campRooms.length;
-      const totalCapacity = campRooms.reduce((sum, room) => sum + room.capacity, 0);
-      const availableBeds = campRooms.reduce((sum, room) => sum + room.availableBeds, 0);
+    if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
+      // Ortak kullanım açıksa, paylaşılan şantiyeler + kampın kendi şantiyesi
+      availableSites = sites.filter(site => 
+        site.name === camp.site || camp.sharedWithSites!.includes(site._id)
+      );
+    } else {
+      // Ortak kullanım kapalıysa, sadece kampın kendi şantiyesi
+      const campSite = sites.find(site => site.name === camp.site);
+      if (campSite) {
+        availableSites = [campSite];
+      }
+    }
+    
+    // Her şantiye için istatistikleri hesapla
+    const stats = availableSites.map(site => {
+      const siteRooms = rooms.filter(room => room.project === site.name);
+      const totalRooms = siteRooms.length;
+      const totalCapacity = siteRooms.reduce((sum, room) => sum + room.capacity, 0);
+      const availableBeds = siteRooms.reduce((sum, room) => sum + room.availableBeds, 0);
       const occupiedBeds = totalCapacity - availableBeds;
-      const totalWorkers = campRooms.reduce((sum, room) => sum + room.workers.length, 0);
+      const totalWorkers = siteRooms.reduce((sum, room) => sum + (room.workers?.length || 0), 0);
       const occupancyRate = totalCapacity > 0 ? (occupiedBeds / totalCapacity) * 100 : 0;
 
       return {
-        name: project,
+        name: site.name,
         totalRooms,
         totalCapacity,
         occupiedBeds,
@@ -80,7 +199,7 @@ export default function ReportsPage() {
 
     setCampStats(stats);
 
-    // Genel istatistikleri hesapla
+    // Genel istatistikleri hesapla (zaten filtrelenmiş odalar)
     const total = {
       totalRooms: rooms.length,
       totalCapacity: rooms.reduce((sum, room) => sum + room.capacity, 0),
@@ -154,7 +273,29 @@ export default function ReportsPage() {
       {/* Ana İçerik */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
-          {/* Genel İstatistikler */}
+          {loading ? (
+            <div className="flex justify-center items-center h-96">
+              <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full mx-4">
+                <div className="flex flex-col items-center space-y-4">
+                  <div className="relative">
+                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-200"></div>
+                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-600 border-t-transparent absolute top-0 left-0"></div>
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-900">Raporlar Yükleniyor</h3>
+                  <p className="text-sm text-gray-500 text-center">
+                    Kamp verileri ve istatistikler hazırlanıyor, lütfen bekleyin...
+                  </p>
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Genel İstatistikler */}
           <div className="bg-white shadow overflow-hidden sm:rounded-lg mb-6">
             <div className="px-4 py-5 sm:px-6">
               <h3 className="text-lg leading-6 font-medium text-gray-900">Genel İstatistikler</h3>
@@ -185,17 +326,17 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Kamp Bazında İstatistikler */}
+          {/* Şantiye Bazında İstatistikler */}
           <div className="bg-white shadow overflow-hidden sm:rounded-lg">
             <div className="px-4 py-5 sm:px-6">
-              <h3 className="text-lg leading-6 font-medium text-gray-900">Kamp Bazında İstatistikler</h3>
+              <h3 className="text-lg leading-6 font-medium text-gray-900">Şantiye Bazında İstatistikler</h3>
             </div>
             <div className="border-t border-gray-200">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Kamp
+                      Şantiye
                     </th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Oda Sayısı
@@ -218,28 +359,28 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {campStats.map((stat) => (
-                    <tr key={stat.name}>
+                  {Object.entries(siteStats).map(([siteName, siteData]) => (
+                    <tr key={siteName}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {stat.name}
+                        {siteName}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {stat.totalRooms}
+                        {siteData.rooms}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {stat.totalCapacity}
+                        {siteData.capacity}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {stat.occupiedBeds}
+                        {siteData.workers}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {stat.availableBeds}
+                        {siteData.capacity - siteData.workers}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {stat.totalWorkers}
+                        {siteData.workers}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        %{stat.occupancyRate.toFixed(1)}
+                        %{siteData.occupancyRate.toFixed(1)}
                       </td>
                     </tr>
                   ))}
@@ -247,6 +388,8 @@ export default function ReportsPage() {
               </table>
             </div>
           </div>
+            </>
+          )}
         </div>
       </main>
     </div>

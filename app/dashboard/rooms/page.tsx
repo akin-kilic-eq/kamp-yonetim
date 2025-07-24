@@ -398,7 +398,13 @@ export default function RoomsPage() {
             <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
               <h3 className="text-lg leading-6 font-medium text-gray-900">Odalar</h3>
               <button
-                onClick={() => setShowAddRoomModal(true)}
+                onClick={() => {
+                  // İlk şantiye seçeneğini default olarak seç
+                  if (projectOptions.length > 0) {
+                    setNewRoom(prev => ({ ...prev, projectOption: projectOptions[0].label }));
+                  }
+                  setShowAddRoomModal(true);
+                }}
                 className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
               >
                 Yeni Oda Ekle
@@ -460,6 +466,8 @@ export default function RoomsPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedRoom(room);
+                                // Seçili odanın şantiyesini default olarak seç
+                                setNewWorker(prev => ({ ...prev, project: room.project }));
                                 setShowAddWorkerModal(true);
                               }}
                               className="text-blue-600 hover:text-blue-900 flex items-center space-x-2"

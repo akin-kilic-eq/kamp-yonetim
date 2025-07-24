@@ -3,6 +3,7 @@ import connectToDatabase from '@/app/lib/mongodb';
 import Worker from '@/app/models/Worker';
 import Room from '@/app/models/Room';
 import Camp from '@/app/models/Camp';
+import User from '@/app/models/User';
 import { Types } from 'mongoose';
 
 // Yardımcı fonksiyon: Yazma iznini kontrol et
@@ -16,7 +17,39 @@ async function checkWritePermission(userEmail: string, campId: string): Promise<
       share.email === userEmail && share.permission === 'write'
   );
 
-  return isOwner || hasWritePermission;
+  if (isOwner || hasWritePermission) {
+    return true;
+  }
+
+  // Kurucu admin ve merkez admin için tam yetki
+  const user = await User.findOne({ email: userEmail });
+  if (user && (user.role === 'kurucu_admin' || user.role === 'merkez_admin')) {
+    return true;
+  }
+
+  // Şantiye admini kontrolü - kendi şantiyesindeki user'ların kamplarını düzenleyebilir
+  if (user && user.role === 'santiye_admin' && user.site) {
+    // Kamp sahibinin şantiye bilgisini kontrol et
+    const campOwner = await User.findOne({ email: camp.userEmail });
+    if (campOwner && campOwner.site === user.site) {
+      return true; // Aynı şantiyedeki user'ın kampı
+    }
+  }
+  
+  // User rolündeki kullanıcılar için şantiye erişim yetkisi ve izin kontrolü
+  if (user && user.role === 'user') {
+    if (camp.userEmail === userEmail) {
+      return true; // Kendi kampında tam yetki
+    } else if (user.siteAccessApproved && user.sitePermissions?.canEditCamps && user.site) {
+      const campOwner = await User.findOne({ email: camp.userEmail });
+      if (campOwner && campOwner.site === user.site) {
+        return true; // Şantiye erişim yetkisi ve düzenleme izni varsa
+      }
+    }
+    return false; // Diğer durumlarda sadece görüntüleme
+  }
+
+  return false;
 }
 
 const parseCustomDate = (dateString: string | undefined): string => {
@@ -194,6 +227,28 @@ export async function POST(request: Request) {
         console.error('Worker import error:', error);
         results.failed++;
         results.errors.push(`Sicil No ${workerData['Sicil No'] || 'Bilinmeyen'}: ${error.message}`);
+      }
+    }
+
+    // Import edilen odaların availableBeds değerlerini güncelle
+    const updatedRoomIds = Array.from(new Set(
+      workers
+        .map(w => w['Kaldığı Oda'])
+        .filter(Boolean)
+        .map(odaNo => {
+          const room = roomsByNumber.get(odaNo.toString());
+          return room ? room._id.toString() : null;
+        })
+        .filter(Boolean)
+    ));
+
+    for (const roomId of updatedRoomIds) {
+      const room = await Room.findById(roomId);
+      if (room) {
+        const workerCount = await Worker.countDocuments({ roomId: room._id });
+        const availableBeds = room.capacity - workerCount;
+        room.availableBeds = availableBeds;
+        await room.save();
       }
     }
 

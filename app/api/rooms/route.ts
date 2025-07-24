@@ -1,8 +1,10 @@
 import Worker from '@/app/models/Worker';
 import Room from '@/app/models/Room';
 import Camp from '@/app/models/Camp';
+import User from '@/app/models/User';
 import { NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongodb';
+import mongoose from 'mongoose';
 
 async function checkWritePermission(campId: string, userEmail: string): Promise<boolean> {
   const camp = await Camp.findById(campId);
@@ -19,7 +21,39 @@ async function checkWritePermission(campId: string, userEmail: string): Promise<
       share.email === userEmail && share.permission === 'write'
   );
 
-  return hasPermission;
+  if (hasPermission) {
+    return true;
+  }
+
+  // Kurucu admin ve merkez admin için tam yetki
+  const user = await User.findOne({ email: userEmail });
+  if (user && (user.role === 'kurucu_admin' || user.role === 'merkez_admin')) {
+    return true;
+  }
+
+  // Şantiye admini kontrolü - kendi şantiyesindeki user'ların kamplarını düzenleyebilir
+  if (user && user.role === 'santiye_admin' && user.site) {
+    // Kamp sahibinin şantiye bilgisini kontrol et
+    const campOwner = await User.findOne({ email: camp.userEmail });
+    if (campOwner && campOwner.site === user.site) {
+      return true; // Aynı şantiyedeki user'ın kampı
+    }
+  }
+  
+  // User rolündeki kullanıcılar için şantiye erişim yetkisi ve izin kontrolü
+  if (user && user.role === 'user') {
+    if (camp.userEmail === userEmail) {
+      return true; // Kendi kampında tam yetki
+    } else if (user.siteAccessApproved && user.sitePermissions?.canEditCamps && user.site) {
+      const campOwner = await User.findOne({ email: camp.userEmail });
+      if (campOwner && campOwner.site === user.site) {
+        return true; // Şantiye erişim yetkisi ve düzenleme izni varsa
+      }
+    }
+    return false; // Diğer durumlarda sadece görüntüleme
+  }
+
+  return false;
 }
 
 export async function GET(request: Request) {
@@ -30,19 +64,39 @@ export async function GET(request: Request) {
 
     await connectDB();
 
-    const rooms = await Room.find({ campId }).populate('workers');
-    // Her oda için işçi sayısını ve boş yatak sayısını hesapla
-    const roomsWithCounts = await Promise.all(
-      rooms.map(async (room) => {
-        const occupancy = await Worker.countDocuments({ roomId: room._id });
-        const availableBeds = room.capacity - occupancy;
-        return {
-          ...room.toObject(),
-          occupancy,
-          availableBeds
-        };
-      })
-    );
+    // Aggregate pipeline ile tek sorguda tüm verileri çek
+    const roomsWithCounts = await Room.aggregate([
+      { $match: { campId: new mongoose.Types.ObjectId(campId!) } },
+      {
+        $lookup: {
+          from: 'workers',
+          localField: '_id',
+          foreignField: 'roomId',
+          as: 'workers'
+        }
+      },
+      {
+        $addFields: {
+          occupancy: { $size: '$workers' },
+          availableBeds: { $subtract: ['$capacity', { $size: '$workers' }] }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          number: 1,
+          capacity: 1,
+          company: 1,
+          project: 1,
+          availableBeds: 1,
+          workers: 1,
+          occupancy: 1,
+          campId: 1,
+          createdAt: 1
+        }
+      }
+    ]);
+
     return NextResponse.json(roomsWithCounts);
   } catch (error) {
     console.error('API/ROOMS GET ERROR:', error);

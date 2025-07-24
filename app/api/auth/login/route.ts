@@ -17,6 +17,15 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log('Veritabanından gelen kullanıcı:', {
+      email: user.email,
+      role: user.role,
+      site: user.site,
+      isApproved: user.isApproved,
+      siteAccessApproved: user.siteAccessApproved,
+      sitePermissions: user.sitePermissions
+    });
+
     // Şifre kontrolü (gerçek uygulamada hash kontrolü yapılmalı)
     if (user.password !== password) {
       return NextResponse.json(
@@ -29,6 +38,11 @@ export async function POST(request: Request) {
       message: 'Giriş başarılı',
       user: {
         email: user.email,
+        role: user.role,
+        site: user.site,
+        isApproved: user.isApproved,
+        siteAccessApproved: user.siteAccessApproved,
+        sitePermissions: user.sitePermissions,
         camps: user.camps
       }
     });

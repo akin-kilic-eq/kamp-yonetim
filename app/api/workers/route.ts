@@ -3,6 +3,7 @@ import connectDB from '@/app/lib/mongodb';
 import Worker from '@/app/models/Worker';
 import Room from '@/app/models/Room';
 import Camp from '@/app/models/Camp';
+import User from '@/app/models/User';
 import mongoose from 'mongoose';
 
 // Yetki kontrolü için yardımcı fonksiyon
@@ -14,10 +15,44 @@ async function checkWritePermission(campId: string, userEmail: string): Promise<
     return true;
   }
 
-  return camp.sharedWith.some(
+  const hasPermission = camp.sharedWith.some(
     (share: { email: string; permission: string }) =>
       share.email === userEmail && share.permission === 'write'
   );
+
+  if (hasPermission) {
+    return true;
+  }
+
+  // Kurucu admin ve merkez admin için tam yetki
+  const user = await User.findOne({ email: userEmail });
+  if (user && (user.role === 'kurucu_admin' || user.role === 'merkez_admin')) {
+    return true;
+  }
+
+  // Şantiye admini kontrolü - kendi şantiyesindeki user'ların kamplarını düzenleyebilir
+  if (user && user.role === 'santiye_admin' && user.site) {
+    // Kamp sahibinin şantiye bilgisini kontrol et
+    const campOwner = await User.findOne({ email: camp.userEmail });
+    if (campOwner && campOwner.site === user.site) {
+      return true; // Aynı şantiyedeki user'ın kampı
+    }
+  }
+  
+  // User rolündeki kullanıcılar için şantiye erişim yetkisi ve izin kontrolü
+  if (user && user.role === 'user') {
+    if (camp.userEmail === userEmail) {
+      return true; // Kendi kampında tam yetki
+    } else if (user.siteAccessApproved && user.sitePermissions?.canEditCamps && user.site) {
+      const campOwner = await User.findOne({ email: camp.userEmail });
+      if (campOwner && campOwner.site === user.site) {
+        return true; // Şantiye erişim yetkisi ve düzenleme izni varsa
+      }
+    }
+    return false; // Diğer durumlarda sadece görüntüleme
+  }
+
+  return false;
 }
 
 export async function GET(request: Request) {
@@ -34,10 +69,37 @@ export async function GET(request: Request) {
       // Belirli bir odadaki işçileri getir
       query.roomId = new mongoose.Types.ObjectId(roomId);
     } else if (campId) {
-      // Kamp bazlı işçileri getir
-      const rooms = await Room.find({ campId: new mongoose.Types.ObjectId(campId) });
-      const roomIds = rooms.map(room => room._id);
-      query.roomId = { $in: roomIds };
+      // Kamp bazlı işçileri getir - aggregate ile optimize edilmiş sorgu
+      const workers = await Worker.aggregate([
+        {
+          $lookup: {
+            from: 'rooms',
+            localField: 'roomId',
+            foreignField: '_id',
+            as: 'roomInfo'
+          }
+        },
+        {
+          $match: {
+            'roomInfo.campId': new mongoose.Types.ObjectId(campId)
+          }
+        },
+        {
+          $addFields: {
+            roomId: {
+              _id: { $arrayElemAt: ['$roomInfo._id', 0] },
+              number: { $arrayElemAt: ['$roomInfo.number', 0] },
+              project: { $arrayElemAt: ['$roomInfo.project', 0] }
+            }
+          }
+        },
+        {
+          $project: {
+            roomInfo: 0
+          }
+        }
+      ]);
+      return NextResponse.json(workers);
     }
 
     const workers = await Worker.find(query).populate('roomId', 'number project');

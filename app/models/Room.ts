@@ -40,4 +40,9 @@ const RoomSchema = new Schema({
   }
 });
 
+// Performans için indeksler
+RoomSchema.index({ campId: 1 });
+RoomSchema.index({ campId: 1, number: 1 }, { unique: true });
+RoomSchema.index({ project: 1 });
+
 export default models.Room || model('Room', RoomSchema); 

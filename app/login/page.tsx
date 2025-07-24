@@ -25,19 +25,46 @@ export default function LoginPage() {
     try {
       const response = await login(formData.email, formData.password);
       
+      console.log('Login API yanıtı:', response);
+      
       if (response.error) {
         setError(response.error);
         return;
       }
 
-      // Kullanıcı bilgilerini session'a kaydet
-      sessionStorage.setItem('currentUser', JSON.stringify({
-        email: response.user.email,
-        camps: response.user.camps
-      }));
+      if (response.user.email !== 'kurucu_admin@antteq.com' && !response.user.isApproved) {
+        setError('Hesabınız henüz onaylanmadı. Lütfen yönetici onayını bekleyin.');
+        return;
+      }
 
-      // Ana sayfaya yönlendir
-      router.push('/camps');
+      // Kullanıcı bilgilerini session'a kaydet
+      const userData = {
+        email: response.user.email.toLowerCase(),
+        role: response.user.role,
+        site: response.user.site,
+        isApproved: response.user.isApproved,
+        siteAccessApproved: response.user.siteAccessApproved,
+        sitePermissions: response.user.sitePermissions,
+        camps: response.user.camps
+      };
+      
+      console.log('Session\'a kaydedilen kullanıcı verileri:', userData);
+      sessionStorage.setItem('currentUser', JSON.stringify(userData));
+
+      // Rol bazlı yönlendirme
+      switch (response.user.role) {
+        case 'kurucu_admin':
+          router.push('/admin-dashboard');
+          break;
+        case 'merkez_admin':
+          router.push('/merkez-admin-dashboard');
+          break;
+        case 'santiye_admin':
+        case 'user':
+        default:
+          router.push('/camps');
+          break;
+      }
     } catch (error) {
       setError('Giriş yapılırken bir hata oluştu');
     }

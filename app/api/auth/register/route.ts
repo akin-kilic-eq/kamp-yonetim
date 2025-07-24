@@ -4,7 +4,7 @@ import User from '@/app/models/User';
 
 export async function POST(request: Request) {
   try {
-    const { email, password } = await request.json();
+    const { email, password, site } = await request.json();
 
     await connectDB();
 
@@ -21,6 +21,9 @@ export async function POST(request: Request) {
     const user = await User.create({
       email,
       password, // Gerçek uygulamada şifre hash'lenmelidir
+      site,
+      role: 'user',
+      isApproved: false,
       camps: []
     });
 
@@ -28,6 +31,9 @@ export async function POST(request: Request) {
       message: 'Kullanıcı başarıyla oluşturuldu',
       user: {
         email: user.email,
+        site: user.site,
+        role: user.role,
+        isApproved: user.isApproved,
         camps: user.camps
       }
     });

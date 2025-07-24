@@ -17,7 +17,7 @@ export default function WorkersPage() {
   // State tanımlamaları
   const [workers, setWorkers] = useState<WorkerWithRoom[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [currentCamp, setCurrentCamp] = useState<{ _id: string; id?: string; name: string } | null>(null);
+  const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
@@ -60,11 +60,46 @@ export default function WorkersPage() {
     failureCount: 0
   });
 
-  // Proje seçenekleri
-  const projectOptions = [
+  // Dinamik proje seçenekleri
+  const [projectOptions, setProjectOptions] = useState([
     { label: 'Slava 4', value: 'Slava 4' },
     { label: 'Slava 2-3', value: 'Slava 2-3' }
-  ];
+  ]);
+
+  // Kamp ortak kullanım ayarlarına göre şantiye seçeneklerini güncelle
+  const updateProjectOptions = async (camp: Camp) => {
+    try {
+      // Tüm şantiyeleri getir
+      const sitesResponse = await fetch('/api/sites');
+      const sites = await sitesResponse.json();
+      
+      if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
+        // Ortak kullanım açıksa, paylaşılan şantiyeler + kampın kendi şantiyesi
+        const availableSites = sites.filter((site: any) => 
+          site.name === camp.site || camp.sharedWithSites!.includes(site._id)
+        );
+        
+        const options = availableSites.map((site: any) => ({
+          label: site.name,
+          value: site.name
+        }));
+        
+        setProjectOptions(options);
+      } else {
+        // Ortak kullanım kapalıysa, sadece kampın kendi şantiyesi
+        const campSite = sites.find((site: any) => site.name === camp.site);
+        if (campSite) {
+          const options = [{
+            label: campSite.name,
+            value: campSite.name
+          }];
+          setProjectOptions(options);
+        }
+      }
+    } catch (error) {
+      console.error('Şantiye seçenekleri güncellenirken hata:', error);
+    }
+  };
 
   // Oturum ve kamp kontrolü ve veri yükleme
   useEffect(() => {
@@ -81,13 +116,32 @@ export default function WorkersPage() {
       const user = JSON.parse(userData);
       setCurrentCamp(camp);
 
+      // Kamp ortak kullanım ayarlarına göre şantiye seçeneklerini güncelle
+      updateProjectOptions(camp);
+
       // Yetki kontrolü
       const isOwner = camp.userEmail === user.email;
       const canWrite = camp.sharedWith?.some(
         (share) => share.email === user.email && share.permission === 'write'
       ) || false;
+      const isKurucuAdmin = user.role === 'kurucu_admin';
+      const isSiteAdmin = user.role === 'santiye_admin' && user.site && camp.site === user.site;
+      
+      // User rolü için şantiye erişim yetkisi ve izin kontrolü
+      let userWriteAccess = false;
+      if (user.role === 'user') {
+        if (isOwner) {
+          // Kendi kampında tam yetki
+          userWriteAccess = true;
+        } else if (user.siteAccessApproved && user.sitePermissions?.canEditCamps && user.site && camp.site === user.site) {
+          // Şantiye erişim yetkisi ve düzenleme izni varsa, aynı şantiyedeki diğer kamplarda düzenleme yapabilir
+          userWriteAccess = true;
+        }
+      }
+      
+      const hasWriteAccess = isKurucuAdmin || isSiteAdmin || isOwner || canWrite || userWriteAccess;
 
-      setHasWriteAccess(isOwner || canWrite);
+      setHasWriteAccess(hasWriteAccess);
       
       if(camp?._id) {
         loadData(camp._id);
@@ -95,22 +149,28 @@ export default function WorkersPage() {
     }
   }, []);
 
-  // Verileri yükle
-  const loadData = async (campId: string) => {
+  useEffect(() => {
+    if (currentCamp?._id) loadData(currentCamp._id, true);
+  }, [currentCamp]);
+
+  // Verileri yükle - Paralel olarak çek
+  const loadData = async (campId: string, forceRefresh: boolean = false) => {
     try {
       setLoading(true);
       setError('');
 
-      // Odaları çek
-      const roomsData = await getRooms(campId);
+      // Odaları ve işçileri paralel olarak çek
+      const [roomsData, workersData] = await Promise.all([
+        getRooms(campId),
+        getWorkers(campId, undefined, forceRefresh)
+      ]);
+
       if (Array.isArray(roomsData)) {
         setRooms(roomsData);
       } else {
-        setRooms([]); // Hata durumunda veya veri yoksa boş dizi ata
+        setRooms([]);
       }
 
-      // İşçileri çek
-      const workersData = await getWorkers(campId);
       if (Array.isArray(workersData)) {
         const workersWithRoomInfo = workersData.map(worker => {
           let roomNumber = '-';
@@ -125,7 +185,7 @@ export default function WorkersPage() {
         });
         setWorkers(workersWithRoomInfo);
       } else {
-        setWorkers([]); // Hata durumunda veya veri yoksa boş dizi ata
+        setWorkers([]);
       }
     } catch (error) {
       console.error('Veriler yüklenirken hata:', error);
@@ -165,16 +225,23 @@ export default function WorkersPage() {
   // İşçi ekleme
   const handleAddWorker = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.project || !newWorker.roomId || !currentCamp || !currentUserEmail) {
+    if (!newWorker.name || !newWorker.surname || !newWorker.registrationNumber || !newWorker.roomId || !currentCamp || !currentUserEmail) {
       setError('Lütfen tüm alanları doldurun');
       setShowAddModal(false);
       setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', roomId: '', entryDate: new Date().toISOString().split('T')[0] });
       return;
     }
+    
+    // Ortak kullanım kapalıysa otomatik olarak kampın şantiyesini kullan
+    const projectValue = currentCamp.isPublic ? newWorker.project : (currentCamp.site || '');
+    if (!projectValue) {
+      setError('Şantiye bilgisi bulunamadı');
+      return;
+    }
 
     try {
       setError('');
-      const campId = currentCamp._id || currentCamp.id;
+      const campId = currentCamp._id;
       if (!campId) {
         setError('Kamp bilgisi bulunamadı');
         setShowAddModal(false);
@@ -186,7 +253,7 @@ export default function WorkersPage() {
         name: newWorker.name,
         surname: newWorker.surname,
         registrationNumber: newWorker.registrationNumber,
-        project: newWorker.project,
+        project: projectValue,
         roomId: newWorker.roomId,
         campId: campId,
         entryDate: new Date(newWorker.entryDate).toISOString()
@@ -223,7 +290,7 @@ export default function WorkersPage() {
 
     try {
       setError('');
-      const campId = currentCamp._id || currentCamp.id;
+      const campId = currentCamp._id;
       if (!campId) {
         setError('Kamp bilgisi bulunamadı');
         return;
@@ -254,18 +321,18 @@ export default function WorkersPage() {
 
   // İşçi silme
   const handleDeleteWorker = async () => {
-    if (!selectedWorker?._id || !currentUserEmail) return;
+    if (!selectedWorker?._id || !currentUserEmail || !currentCamp?._id) return;
 
     try {
       setError('');
-      const response = await deleteWorker(selectedWorker._id, currentUserEmail);
+      const response = await deleteWorker(selectedWorker._id, currentUserEmail, currentCamp._id);
       
       if (response.error) {
         setError(response.error);
         return;
       }
 
-      await loadData(currentCamp!._id);
+      await loadData(currentCamp._id);
       setShowDeleteModal(false);
       setSelectedWorker(null);
     } catch (error) {
@@ -283,7 +350,7 @@ export default function WorkersPage() {
 
     try {
       setError('');
-      const campId = currentCamp._id || currentCamp.id;
+      const campId = currentCamp._id;
       if (!campId) {
         setError('Kamp bilgisi bulunamadı');
         return;
@@ -382,10 +449,15 @@ export default function WorkersPage() {
     }
     setError(resultMessage);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setShowImportModal(false);
       setImportData([]);
-      if (currentCamp) loadData(currentCamp._id);
+      window.dispatchEvent(new Event('refreshRooms'));
+      if (currentCamp) {
+        // Rooms sayfası için de forceRefresh ile güncelle
+        await fetch(`/api/rooms?campId=${currentCamp._id}`);
+      }
+      if (currentCamp) loadData(currentCamp._id, true); // forceRefresh ile
       setIsImporting(false);
     }, 2000);
   };
@@ -459,7 +531,19 @@ export default function WorkersPage() {
                   Excel'den İçe Aktar
                 </button>
                 <button
-                  onClick={() => setShowAddModal(true)}
+                  onClick={() => {
+                    // Her durumda kampın kendi şantiyesini öncelikli olarak seç
+                    if (currentCamp) {
+                      const campSiteOption = projectOptions.find(option => option.value === currentCamp.site);
+                      if (campSiteOption) {
+                        setNewWorker(prev => ({ ...prev, project: campSiteOption.value }));
+                      } else if (projectOptions.length > 0) {
+                        // Kampın şantiyesi bulunamazsa ilk seçeneği seç
+                        setNewWorker(prev => ({ ...prev, project: projectOptions[0].value }));
+                      }
+                    }
+                    setShowAddModal(true);
+                  }}
                   className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -611,20 +695,29 @@ export default function WorkersPage() {
                 />
               </div>
               <div className="mb-4">
-                <label className="block mb-1 font-medium">Proje *</label>
-                <select
-                  value={newWorker.project}
-                  onChange={(e) => setNewWorker({ ...newWorker, project: e.target.value })}
-                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                >
-                  <option value="">Proje Seçin</option>
-                  {projectOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <label className="block mb-1 font-medium">Şantiye *</label>
+                {currentCamp?.isPublic ? (
+                  <select
+                    value={newWorker.project}
+                    onChange={(e) => setNewWorker({ ...newWorker, project: e.target.value })}
+                    className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="" disabled>Şantiye Seçin</option>
+                    {projectOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={newWorker.project}
+                    readOnly
+                    className="w-full p-2 border border-gray-300 rounded bg-gray-50 text-gray-700"
+                  />
+                )}
               </div>
               <div className="mb-4">
                 <label className="block mb-1 font-medium">Oda *</label>

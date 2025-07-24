@@ -25,8 +25,11 @@ export interface Camp {
   name: string;
   description: string;
   userEmail: string;
+  site?: string;
   sharedWith?: {
     email: string;
     permission: 'read' | 'write';
   }[];
+  isPublic?: boolean;
+  sharedWithSites?: string[];
 } 

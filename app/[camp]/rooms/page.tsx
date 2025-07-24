@@ -63,11 +63,57 @@ export default function RoomsPage() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [hasWriteAccess, setHasWriteAccess] = useState(false);
 
-  // Proje seçenekleri (örnek)
-  const projectOptions = [
+  // Dinamik proje seçenekleri
+  const [projectOptions, setProjectOptions] = useState([
     { company: 'Slava', project: '4', label: 'Slava 4' },
     { company: 'Slava', project: '2-3', label: 'Slava 2-3' }
-  ];
+  ]);
+
+  // Kamp ortak kullanım ayarlarına göre şantiye seçeneklerini güncelle
+  const updateProjectOptions = async (camp: Camp) => {
+    try {
+      console.log('updateProjectOptions çağrıldı:', camp);
+      
+      // Tüm şantiyeleri getir
+      const sitesResponse = await fetch('/api/sites');
+      const sites = await sitesResponse.json();
+      console.log('Tüm şantiyeler:', sites);
+      
+      if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
+        console.log('Ortak kullanım açık, paylaşılan şantiyeler:', camp.sharedWithSites);
+        // Ortak kullanım açıksa, paylaşılan şantiyeler + kampın kendi şantiyesi
+        const availableSites = sites.filter((site: any) => 
+          site.name === camp.site || camp.sharedWithSites!.includes(site._id)
+        );
+        console.log('Kullanılabilir şantiyeler:', availableSites);
+        
+        const options = availableSites.map((site: any) => ({
+          company: site.name,
+          project: site.name,
+          label: site.name
+        }));
+        
+        console.log('Oluşturulan seçenekler:', options);
+        setProjectOptions(options);
+      } else {
+        console.log('Ortak kullanım kapalı, kamp şantiyesi:', camp.site);
+        // Ortak kullanım kapalıysa, sadece kampın kendi şantiyesi
+        const campSite = sites.find((site: any) => site.name === camp.site);
+        console.log('Bulunan kamp şantiyesi:', campSite);
+        if (campSite) {
+          const options = [{
+            company: campSite.name,
+            project: campSite.name,
+            label: campSite.name
+          }];
+          console.log('Ortak kullanım kapalı seçenekleri:', options);
+          setProjectOptions(options);
+        }
+      }
+    } catch (error) {
+      console.error('Şantiye seçenekleri güncellenirken hata:', error);
+    }
+  };
 
   // Kullanıcı ve kamp bilgisini al ve odaları yükle
   useEffect(() => {
@@ -82,15 +128,35 @@ export default function RoomsPage() {
     if (campData && userData) {
       const camp = JSON.parse(campData) as Camp;
       const user = JSON.parse(userData);
+      
       setCurrentCamp(camp);
+
+      // Kamp ortak kullanım ayarlarına göre şantiye seçeneklerini güncelle
+      updateProjectOptions(camp);
 
       // Yetki kontrolü
       const isOwner = camp.userEmail === user.email;
       const canWrite = camp.sharedWith?.some(
         (share) => share.email === user.email && share.permission === 'write'
       ) || false;
-
-      setHasWriteAccess(isOwner || canWrite);
+      const isKurucuAdmin = user.role === 'kurucu_admin';
+      const isSiteAdmin = user.role === 'santiye_admin' && user.site && camp.site === user.site;
+      
+      // User rolü için şantiye erişim yetkisi ve izin kontrolü
+      let userWriteAccess = false;
+      if (user.role === 'user') {
+        if (isOwner) {
+          // Kendi kampında tam yetki
+          userWriteAccess = true;
+        } else if (user.siteAccessApproved && user.sitePermissions?.canEditCamps && user.site && camp.site === user.site) {
+          // Şantiye erişim yetkisi ve düzenleme izni varsa, aynı şantiyedeki diğer kamplarda düzenleme yapabilir
+          userWriteAccess = true;
+        }
+      }
+      
+      const hasWriteAccess = isKurucuAdmin || isSiteAdmin || isOwner || canWrite || userWriteAccess;
+      
+      setHasWriteAccess(hasWriteAccess);
 
       if (camp?._id) {
         loadRooms(camp._id);
@@ -98,13 +164,21 @@ export default function RoomsPage() {
     }
   }, []);
 
-  const loadRooms = async (campId: string) => {
+  useEffect(() => {
+    const handler = () => {
+      if (currentCamp?._id) loadRooms(currentCamp._id, true);
+    };
+    window.addEventListener('refreshRooms', handler);
+    return () => window.removeEventListener('refreshRooms', handler);
+  }, [currentCamp]);
+
+  const loadRooms = async (campId: string, forceRefresh: boolean = false) => {
     try {
       setLoading(true);
       setError('');
 
       // Odaları çek
-      const response = await getRooms(campId);
+      const response = await getRooms(campId, forceRefresh);
       if ('error' in response && typeof response.error === 'string') {
         setError(response.error);
         return;
@@ -125,10 +199,16 @@ export default function RoomsPage() {
   // Oda ekle
   const handleAddRoom = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newRoom.number || !newRoom.capacity || !newRoom.project || !currentCamp || !currentUserEmail) return;
+    if (!newRoom.number || !newRoom.capacity || !currentCamp || !currentUserEmail) return;
+    
+    // Ortak kullanım kapalıysa otomatik olarak kampın şantiyesini kullan
+    const projectValue = currentCamp.isPublic ? newRoom.project : (currentCamp.site || '');
+    if (!projectValue) return;
+    
     try {
       const response = await createRoom({
         ...newRoom,
+        project: projectValue,
         campId: currentCamp._id,
         company: currentCamp.name,
         availableBeds: newRoom.capacity
@@ -174,18 +254,13 @@ export default function RoomsPage() {
       }
 
       // Silme başarılı olduğunda
-      setRooms(prevRooms => prevRooms.filter(room => room._id !== roomId));
-      
-      // Eğer silinen oda genişletilmiş durumdaysa, genişletmeyi kapat
-      if (expandedRoomId === roomId) {
-        setExpandedRoomId(null);
-      }
-
-      // İşçi listesini güncelle
-      const updatedRoomWorkers = { ...roomWorkers };
-      delete updatedRoomWorkers[roomId];
-      setRoomWorkers(updatedRoomWorkers);
-
+      loadRooms(currentCamp._id, true); // forceRefresh ile rooms'u güncelle
+      setRoomWorkers((prev) => {
+        const updated = { ...prev };
+        delete updated[roomId];
+        return updated;
+      });
+      window.dispatchEvent(new Event('refreshWorkers'));
       setError('Oda başarıyla silindi');
     } catch (error) {
       console.error('Oda silme hatası:', error);
@@ -327,10 +402,14 @@ export default function RoomsPage() {
     setError(resultMessage);
     
     // Kısa bir süre sonra modalı kapat ve listeyi yenile
-    setTimeout(() => {
+    setTimeout(async () => {
+      if (currentCamp) {
+        setLoading(true);
+        await loadRooms(currentCamp._id, true); // Önce rooms'u güncelle
+        setLoading(false);
+      }
       setShowImportModal(false);
       setImportData([]);
-      if (currentCamp) loadRooms(currentCamp._id);
       setIsImporting(false);
     }, 2000);
   };
@@ -343,7 +422,7 @@ export default function RoomsPage() {
       if (!res.error) {
         setShowEditRoomModal(false);
         setSelectedRoom(null);
-        if (currentCamp) loadRooms(currentCamp._id);
+        if (currentCamp) loadRooms(currentCamp._id, true); // forceRefresh ile çağır
       } else {
         setError(res.error);
       }
@@ -399,7 +478,7 @@ export default function RoomsPage() {
         getWorkers(currentCamp._id, roomId).then((data) => {
           if(Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
         });
-        if (currentCamp) loadRooms(currentCamp._id);
+        if (currentCamp) loadRooms(currentCamp._id, true); // forceRefresh ile çağır
       } else {
         setError(res.error);
         setShowAddWorkerModal(false);
@@ -411,6 +490,13 @@ export default function RoomsPage() {
       setNewWorker({ name: '', surname: '', registrationNumber: '', project: '', entryDate: new Date().toISOString().split('T')[0] });
     }
   };
+
+// İşçi ekleme modalı açılırken rooms'u forceRefresh ile güncelle
+const openAddWorkerModal = (room: Room) => {
+  if (currentCamp) loadRooms(currentCamp._id, true);
+  setSelectedRoom(room);
+  setShowAddWorkerModal(true);
+}
 
   const handleUpdateWorker = async () => {
     if (!currentCamp || !editWorkerData._id || !currentUserEmail) {
@@ -440,13 +526,20 @@ export default function RoomsPage() {
     if (!currentCamp || !currentUserEmail) return;
     if (!window.confirm('Bu işçiyi silmek istediğinizden emin misiniz?')) return;
     try {
-      const res = await deleteWorker(workerId, currentUserEmail);
+      const res = await deleteWorker(workerId, currentUserEmail, currentCamp._id);
+      console.log('Silme API yanıtı:', res);
       if (!res.error) {
         const campId = currentCamp._id;
         getWorkers(campId, roomId).then((data) => {
-          if(Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
+          console.log('Yeni işçi listesi:', data);
+          setRoomWorkers((prev) => ({
+            ...prev,
+            [roomId]: Array.isArray(data)
+              ? data.filter(worker => worker._id !== workerId)
+              : []
+          }));
         });
-        loadRooms(campId);
+        loadRooms(campId, true); // forceRefresh ile çağır
       } else {
         setError(res.error);
       }
@@ -499,6 +592,18 @@ export default function RoomsPage() {
     }
   };
 
+  useEffect(() => {
+    if (rooms.length && currentCamp?._id) {
+      rooms.forEach(room => {
+        getWorkers(currentCamp._id, room._id).then((data) => {
+          if (Array.isArray(data)) {
+            setRoomWorkers(prev => ({ ...prev, [room._id]: data }));
+          }
+        });
+      });
+    }
+  }, [rooms, currentCamp]);
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -511,7 +616,19 @@ export default function RoomsPage() {
             {hasWriteAccess && (
               <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none space-x-4">
                 <button
-                  onClick={() => setShowAddRoomModal(true)}
+                  onClick={() => {
+                    // Her durumda kampın kendi şantiyesini öncelikli olarak seç
+                    if (currentCamp) {
+                      const campSiteOption = projectOptions.find(option => option.label === currentCamp.site);
+                      if (campSiteOption) {
+                        setNewRoom(prev => ({ ...prev, project: campSiteOption.label }));
+                      } else if (projectOptions.length > 0) {
+                        // Kampın şantiyesi bulunamazsa ilk seçeneği seç
+                        setNewRoom(prev => ({ ...prev, project: projectOptions[0].label }));
+                      }
+                    }
+                    setShowAddRoomModal(true);
+                  }}
                   className="inline-flex items-center justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 sm:w-auto"
                 >
                   Yeni Oda Ekle
@@ -576,8 +693,9 @@ export default function RoomsPage() {
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 cursor-pointer" onClick={() => toggleRoomDetails(room._id)}>{room.project}</td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 cursor-pointer" onClick={() => toggleRoomDetails(room._id)}>{room.capacity}</td>
-                          <td className={`px-4 py-4 whitespace-nowrap text-sm ${room.availableBeds > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}`}>{room.availableBeds}</td>
-                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{room.capacity - room.availableBeds}</td>
+                          {/* Oda detayında: */}
+                          <td className={`px-4 py-4 whitespace-nowrap text-sm ${((room.capacity - (roomWorkers[room._id]?.length || 0)) > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium')}`}>{room.capacity - (roomWorkers[room._id]?.length || 0)}</td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{roomWorkers[room._id]?.length || 0}</td>
                           {hasWriteAccess && (
                             <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                               <button
@@ -636,15 +754,9 @@ export default function RoomsPage() {
                                               className="text-green-600 hover:underline mr-4"
                                             >Oda Değiştir</button>
                                             <button
-                                              onClick={async () => {
-                                                if (!currentUserEmail) return;
-                                                await deleteWorker(worker._id, currentUserEmail);
-                                                setShowEditWorkerModal(false);
-                                                setSelectedWorker(null);
-                                                getWorkers(currentCamp!._id, room._id).then((data) => {
-                                                  setRoomWorkers((prev) => ({ ...prev, [room._id]: data }));
-                                                });
-                                                loadRooms(currentCamp!._id);
+                                              onClick={() => {
+                                                console.log('Sil butonuna basıldı:', worker._id, room._id);
+                                                handleDeleteWorker(worker._id, room._id);
                                               }}
                                               className="text-red-600 hover:underline"
                                             >Sil</button>
@@ -653,21 +765,22 @@ export default function RoomsPage() {
                                       </tr>
                                     ))}
                                     {/* Boş yataklar için işçi ekle butonu */}
-                                    {hasWriteAccess && Array.from({ length: room.availableBeds }).map((_, index) => (
-                                      <tr key={`empty-${index}`}>
-                                        <td colSpan={hasWriteAccess ? 5 : 4} className="px-6 py-4">
-                                          <button
-                                            onClick={() => {
-                                              setSelectedRoom(room);
-                                              setShowAddWorkerModal(true);
-                                            }}
-                                            className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                                          >
-                                            + Yeni İşçi Ekle
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    {(() => {
+                                      const currentWorkerCount = roomWorkers[room._id]?.length || 0;
+                                      const localAvailableBeds = room.capacity - currentWorkerCount;
+                                      return hasWriteAccess && Array.from({ length: localAvailableBeds > 0 ? localAvailableBeds : 0 }).map((_, index) => (
+                                        <tr key={`empty-${index}`}>
+                                          <td colSpan={hasWriteAccess ? 5 : 4} className="px-6 py-4">
+                                            <button
+                                              onClick={() => openAddWorkerModal(room)}
+                                              className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                            >
+                                              + Yeni İşçi Ekle
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ));
+                                    })()}
                                   </tbody>
                                 </table>
                               </div>
@@ -704,19 +817,30 @@ export default function RoomsPage() {
               </div>
               <div className="mb-4">
                 <label htmlFor="room-project" className="block text-sm font-medium text-gray-700">Şantiye</label>
-                <select
-                  id="room-project"
-                  name="project"
-                  value={newRoom.project}
-                  onChange={(e) => setNewRoom({ ...newRoom, project: e.target.value })}
-                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                  required
-                >
-                  <option value="" disabled>Proje Seçin</option>
-                  {projectOptions.map(option => (
-                    <option key={option.label} value={option.label}>{option.label}</option>
-                  ))}
-                </select>
+                {currentCamp?.isPublic ? (
+                  <select
+                    id="room-project"
+                    name="project"
+                    value={newRoom.project}
+                    onChange={(e) => setNewRoom({ ...newRoom, project: e.target.value })}
+                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                    required
+                  >
+                    <option value="" disabled>Şantiye Seçin</option>
+                    {projectOptions.map(option => (
+                      <option key={option.label} value={option.label}>{option.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    id="room-project"
+                    name="project"
+                    value={newRoom.project}
+                    readOnly
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-700"
+                  />
+                )}
               </div>
               <div className="mb-4">
                 <label htmlFor="room-capacity" className="block text-sm font-medium text-gray-700">Kapasite</label>

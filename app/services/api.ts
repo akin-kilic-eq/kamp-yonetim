@@ -1,11 +1,12 @@
 import { Room, Worker } from '@/app/[camp]/types';
+import { cache } from '@/app/lib/cache';
 
 // Auth API
-export const register = async (email: string, password: string) => {
+export const register = async (email: string, password: string, site: string) => {
   const response = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, site })
   });
   return response.json();
 };
@@ -20,8 +21,9 @@ export const login = async (email: string, password: string) => {
 };
 
 // Camp API
-export const getCamps = async (userEmail: string) => {
-  const response = await fetch(`/api/camps?userEmail=${userEmail}`);
+export const getCamps = async (userEmail: string, role?: string) => {
+  const url = role ? `/api/camps?userEmail=${userEmail}&role=${role}` : `/api/camps?userEmail=${userEmail}`;
+  const response = await fetch(url);
   return response.json();
 };
 
@@ -34,28 +36,40 @@ export const createCamp = async (campData: any) => {
   return response.json();
 };
 
-export const updateCamp = async (campData: any) => {
+export const updateCamp = async (campData: any, userEmail: string) => {
   const response = await fetch(`/api/camps`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(campData)
+    body: JSON.stringify({ ...campData, userEmail })
   });
   return response.json();
 };
 
-export const deleteCamp = async (campId: string) => {
+export const deleteCamp = async (campId: string, userEmail: string) => {
   const response = await fetch(`/api/camps`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: campId })
+    body: JSON.stringify({ id: campId, userEmail })
   });
   return response.json();
 };
 
 // Room API
-export const getRooms = async (campId: string): Promise<Room[]> => {
+export const getRooms = async (campId: string, forceRefresh: boolean = false): Promise<Room[]> => {
+  const cacheKey = `rooms_${campId}`;
+  if (!forceRefresh) {
+    const cached = cache.get<Room[]>(cacheKey);
+    if (cached) return cached;
+  }
+
   const response = await fetch(`/api/rooms?campId=${campId}`);
-  return response.json();
+  const data = await response.json();
+  
+  if (Array.isArray(data)) {
+    cache.set(cacheKey, data, 2 * 60 * 1000); // 2 dakika cache
+  }
+  
+  return data;
 };
 
 export const createRoom = async (roomData: any, userEmail: string) => {
@@ -64,7 +78,15 @@ export const createRoom = async (roomData: any, userEmail: string) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...roomData, userEmail })
   });
-  return response.json();
+  const data = await response.json();
+  
+  // Cache'i temizle
+  if (!data.error) {
+    cache.clearPattern(`rooms_${roomData.campId}`);
+    cache.clearPattern(`stats_${roomData.campId}`);
+  }
+  
+  return data;
 };
 
 export const updateRoom = async (roomData: any, userEmail: string) => {
@@ -86,7 +108,13 @@ export const deleteRoom = async (id: string, campId: string, userEmail: string) 
 };
 
 // Worker API
-export const getWorkers = async (campId?: string, roomId?: string): Promise<Worker[]> => {
+export const getWorkers = async (campId?: string, roomId?: string, forceRefresh: boolean = false): Promise<Worker[]> => {
+  const cacheKey = `workers_${campId || 'all'}_${roomId || 'all'}`;
+  if (!forceRefresh) {
+    const cached = cache.get<Worker[]>(cacheKey);
+    if (cached) return cached;
+  }
+
   let url = '/api/workers';
   const params = new URLSearchParams();
   
@@ -102,7 +130,13 @@ export const getWorkers = async (campId?: string, roomId?: string): Promise<Work
   }
   
   const response = await fetch(url);
-  return response.json();
+  const data = await response.json();
+  
+  if (Array.isArray(data)) {
+    cache.set(cacheKey, data, 2 * 60 * 1000); // 2 dakika cache
+  }
+  
+  return data;
 };
 
 export const createWorker = async (workerData: any, userEmail: string) => {
@@ -111,7 +145,15 @@ export const createWorker = async (workerData: any, userEmail: string) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...workerData, userEmail })
   });
-  return response.json();
+  const data = await response.json();
+  
+  // Cache'i temizle
+  if (!data.error) {
+    cache.clearPattern(`workers_${workerData.campId}`);
+    cache.clearPattern(`stats_${workerData.campId}`);
+  }
+  
+  return data;
 };
 
 export const updateWorker = async (workerData: any, userEmail: string) => {
@@ -120,16 +162,30 @@ export const updateWorker = async (workerData: any, userEmail: string) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...workerData, userEmail })
   });
-  return response.json();
+  const data = await response.json();
+  // Cache'i temizle
+  if (!data.error) {
+    cache.clearPattern(`workers_${workerData.campId}`);
+    cache.clearPattern(`rooms_${workerData.campId}`);
+    cache.clearPattern(`stats_${workerData.campId}`);
+  }
+  return data;
 };
 
-export const deleteWorker = async (id: string, userEmail: string) => {
+export const deleteWorker = async (id: string, userEmail: string, campId?: string) => {
   const response = await fetch('/api/workers', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ _id: id, userEmail })
   });
-  return response.json();
+  const data = await response.json();
+  // Cache'i temizle
+  if (!data.error && campId) {
+    cache.clearPattern(`workers_${campId}`);
+    cache.clearPattern(`rooms_${campId}`);
+    cache.clearPattern(`stats_${campId}`);
+  }
+  return data;
 };
 
 interface ImportResponse {
@@ -218,4 +274,20 @@ export const leaveCamp = async (campId: string, userEmail: string) => {
     body: JSON.stringify({ campId, userEmail })
   });
   return response.json();
+};
+
+// Report API
+export const getCampStats = async (campId: string) => {
+  const cacheKey = `stats_${campId}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  const response = await fetch(`/api/reports/stats?campId=${campId}`);
+  const data = await response.json();
+  
+  if (!data.error) {
+    cache.set(cacheKey, data, 30 * 1000); // 30 saniye cache (test için)
+  }
+  
+  return data;
 }; 

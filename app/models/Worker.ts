@@ -40,4 +40,11 @@ const WorkerSchema = new Schema({
   }
 });
 
+// Performans için indeksler
+WorkerSchema.index({ campId: 1 });
+WorkerSchema.index({ roomId: 1 });
+WorkerSchema.index({ registrationNumber: 1 });
+WorkerSchema.index({ campId: 1, registrationNumber: 1 });
+WorkerSchema.index({ project: 1 });
+
 export default models.Worker || model('Worker', WorkerSchema); 
