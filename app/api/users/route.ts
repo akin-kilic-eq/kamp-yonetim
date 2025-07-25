@@ -61,16 +61,37 @@ export async function GET(request: Request) {
       users = await User.find({});
     }
     // Eksik alanları boş string olarak tamamla ve şifreyi de döndür
-    const usersWithPassword = users.map(u => ({
-      email: u.email,
-      password: u.password || '',
-      role: u.role || '',
-      site: u.site || '',
-      isApproved: typeof u.isApproved === 'boolean' ? u.isApproved : false,
-      siteAccessApproved: typeof u.siteAccessApproved === 'boolean' ? u.siteAccessApproved : false,
-      sitePermissions: u.sitePermissions || { canViewCamps: false, canEditCamps: false, canCreateCamps: false },
-      createdAt: u.createdAt || ''
-    }));
+    const usersWithPassword = users.map(u => {
+      // Şantiye admini rolündeki kullanıcılar için otomatik yetkiler
+      if (u.role === 'santiye_admin') {
+        return {
+          email: u.email,
+          password: u.password || '',
+          role: u.role || '',
+          site: u.site || '',
+          isApproved: typeof u.isApproved === 'boolean' ? u.isApproved : false,
+          siteAccessApproved: true, // Şantiye admini için otomatik true
+          sitePermissions: { 
+            canViewCamps: true, 
+            canEditCamps: true, 
+            canCreateCamps: true 
+          }, // Şantiye admini için tüm yetkiler true
+          createdAt: u.createdAt || ''
+        };
+      }
+      
+      // Diğer roller için normal yetkiler
+      return {
+        email: u.email,
+        password: u.password || '',
+        role: u.role || '',
+        site: u.site || '',
+        isApproved: typeof u.isApproved === 'boolean' ? u.isApproved : false,
+        siteAccessApproved: typeof u.siteAccessApproved === 'boolean' ? u.siteAccessApproved : false,
+        sitePermissions: u.sitePermissions || { canViewCamps: false, canEditCamps: false, canCreateCamps: false },
+        createdAt: u.createdAt || ''
+      };
+    });
     return NextResponse.json(usersWithPassword);
   } catch (error) {
     return NextResponse.json({ error: 'Kullanıcılar getirilirken hata oluştu' }, { status: 500 });

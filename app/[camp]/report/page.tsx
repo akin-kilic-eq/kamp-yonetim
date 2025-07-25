@@ -824,17 +824,17 @@ export default function ReportPage() {
                     <div className="flex justify-between items-center">
                       <div>
                         <h3 className="text-lg font-medium text-white">{siteName}</h3>
-                        <p className={`text-sm text-${borderColor}-100`}>Toplam {siteData.rooms} Oda</p>
+                        <p className="text-sm text-white opacity-80">Toplam {siteData.rooms} Oda</p>
                       </div>
                       <div className="text-right">
                         <p className="text-2xl font-bold text-white">
                           {typeof siteData.occupancyRate === 'number' && !isNaN(siteData.occupancyRate) ? 
                             siteData.occupancyRate.toFixed(1) : '0.0'}%
                         </p>
-                        <p className={`text-sm text-${borderColor}-100`}>Doluluk</p>
+                        <p className="text-sm text-white opacity-80">Doluluk</p>
                       </div>
                     </div>
-                    <div className={`mt-4 pt-4 border-t border-${borderColor}-400 border-opacity-30`}>
+                    <div className="mt-4 pt-4 border-t border-white border-opacity-30">
                       <div className="flex justify-between items-center text-white">
                         <p className="text-sm opacity-90">Toplam İşçi</p>
                         <p className="text-lg font-semibold">{stats.crossProjectStats[siteName]?.totalWorkers || 0} Kişi</p>

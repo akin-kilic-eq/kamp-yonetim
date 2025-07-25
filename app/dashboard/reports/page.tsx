@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { cache } from '@/app/lib/cache';
 
 interface Room {
   id: number;
@@ -74,6 +75,15 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Sayfa yüklendiğinde cache'i kontrol et ve gerekirse temizle
+    if (typeof window !== 'undefined') {
+      // Performance Navigation API ile sayfa yenilenip yenilenmediğini kontrol et
+      if (performance.navigation.type === 1) {
+        cache.forceClear();
+        console.log('Raporlar: Sayfa yenilendi, cache temizlendi');
+      }
+    }
+
     const loadData = async () => {
       try {
         setLoading(true);

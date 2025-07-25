@@ -67,6 +67,99 @@ export default function CampsPage() {
   const [userPermissions, setUserPermissions] = useState<{ siteAccessApproved?: boolean; sitePermissions?: { canViewCamps?: boolean; canEditCamps?: boolean; canCreateCamps?: boolean } } | null>(null);
   const [showPermissionUpdate, setShowPermissionUpdate] = useState(false);
   const [pendingAccessCount, setPendingAccessCount] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // İlk yükleme için cache kontrolü - tüm kullanıcılar için
+  useEffect(() => {
+    const userSession = sessionStorage.getItem('currentUser');
+    if (userSession) {
+      const user = JSON.parse(userSession);
+      const cacheKey = `campsCache_${user.email}`;
+      const cacheData = sessionStorage.getItem(cacheKey);
+      
+      if (cacheData) {
+        try {
+          const { data, timestamp, userRole, permissions } = JSON.parse(cacheData);
+          const now = Date.now();
+          const cacheAge = now - timestamp;
+          
+          // Cache süresi kontrolü
+          const maxCacheAge = (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') 
+            ? 30 * 60 * 1000  // 30 dakika
+            : 5 * 60 * 1000;  // 5 dakika
+          
+          if (cacheAge <= maxCacheAge && userRole === user.role) {
+            // Cache geçerli, verileri göster
+            setCamps(data);
+            setUserPermissions(permissions);
+            setLastCacheTime(timestamp);
+            setIsLoading(false);
+            
+            // Admin kullanıcılar için istatistikleri yükle (her zaman güncel veriler)
+            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+              loadStats(data);
+            }
+            return; // Ana useEffect'in çalışmasını engelle
+          } else {
+            // Cache eski ama verileri göster, arka planda yenile
+            setCamps(data);
+            setUserPermissions(permissions);
+            setLastCacheTime(timestamp);
+            setIsLoading(false);
+            
+            // Admin kullanıcılar için istatistikleri yükle (her zaman güncel veriler)
+            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+              loadStats(data);
+            }
+            
+            // Arka planda yenile
+            setTimeout(() => {
+              loadCamps(user.email);
+            }, 100);
+            return; // Ana useEffect'in çalışmasını engelle
+          }
+        } catch (error) {
+          console.error('Cache parse hatası:', error);
+          // Hata durumunda normal akışa devam et
+        }
+      }
+    }
+  }, []);
+  const [lastCacheTime, setLastCacheTime] = useState<number>(0);
+
+  // Cache temizleme fonksiyonu
+  const clearCampsCache = (email?: string) => {
+    const userEmail = email || currentUser?.email;
+    if (userEmail) {
+      const cacheKey = `campsCache_${userEmail}`;
+      sessionStorage.removeItem(cacheKey);
+      console.log('Kamp cache temizlendi:', cacheKey);
+    }
+  };
+
+  // Yetkiler değiştiğinde cache'i temizle
+  const clearCacheOnPermissionChange = () => {
+    if (currentUser?.email) {
+      clearCampsCache();
+      console.log('Yetki değişikliği nedeniyle cache temizlendi');
+      // Sadece user rolü için loading göster
+      if (currentUser.role === 'user') {
+        setIsLoading(true);
+      }
+    }
+  };
+
+  // Cache yenileme fonksiyonu
+  const refreshCampsCache = () => {
+    if (currentUser?.email) {
+      clearCampsCache();
+      // Cache yenileme sırasında sadece user rolü için loading göster
+      if (currentUser.role === 'user') {
+        setIsLoading(true);
+      }
+      loadCamps(currentUser.email);
+    }
+  };
 
   useEffect(() => {
     // Oturum kontrolü
@@ -77,6 +170,40 @@ export default function CampsPage() {
     }
     const user = JSON.parse(userSession);
     setCurrentUser(user);
+    
+      // Cache kontrolü ve yükleme
+  const shouldRefreshCache = () => {
+    const cacheKey = `campsCache_${user.email}`;
+    const cacheData = sessionStorage.getItem(cacheKey);
+    
+    if (!cacheData) return true; // Cache yoksa yenile
+    
+    try {
+      const { data, timestamp, userRole, permissions } = JSON.parse(cacheData);
+      const now = Date.now();
+      const cacheAge = now - timestamp;
+      
+      // Admin roller için daha uzun cache süresi (30 dakika)
+      const maxCacheAge = (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') 
+        ? 30 * 60 * 1000  // 30 dakika
+        : 5 * 60 * 1000;  // 5 dakika
+      
+      // Cache süresi dolmuşsa veya kullanıcı rolü değiştiyse yenile
+      if (cacheAge > maxCacheAge || userRole !== user.role) {
+        return true;
+      }
+      
+      // Cache geçerliyse kullan
+      setCamps(data);
+      setUserPermissions(permissions);
+      setLastCacheTime(timestamp);
+      setIsLoading(false);
+      return false;
+    } catch (error) {
+      console.error('Cache parse hatası:', error);
+      return true; // Hata durumunda yenile
+    }
+  };
     
     // Kullanıcı yetkilerini çek
     const fetchUserPermissions = () => {
@@ -108,22 +235,80 @@ export default function CampsPage() {
               console.log('Yetkileriniz güncellendi!');
               setShowPermissionUpdate(true);
               setTimeout(() => setShowPermissionUpdate(false), 5000); // 5 saniye sonra gizle
+              
+              // Yetkiler değiştiyse cache'i temizle
+              clearCacheOnPermissionChange();
             }
           }
           
           setUserPermissions(newPermissions);
+          
+          // Cache'i güncelle (eğer varsa)
+          const cacheKey = `campsCache_${user.email}`;
+          const existingCache = sessionStorage.getItem(cacheKey);
+          if (existingCache) {
+            try {
+              const cacheData = JSON.parse(existingCache);
+              cacheData.permissions = newPermissions;
+              sessionStorage.setItem(cacheKey, JSON.stringify(cacheData));
+            } catch (error) {
+              console.error('Cache güncelleme hatası:', error);
+            }
+          }
         })
-        .catch(() => setUserPermissions(null));
+        .catch(() => {
+          setUserPermissions(null);
+        });
     };
     
-    fetchUserPermissions();
-    loadCamps(user.email);
+    // Admin roller için özel kontrol - yetki kontrolü yapma
+    if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+      // Admin roller için otomatik yetkiler
+      const adminPermissions = {
+        siteAccessApproved: true,
+        sitePermissions: {
+          canViewCamps: true,
+          canEditCamps: true,
+          canCreateCamps: true
+        }
+      };
+      setUserPermissions(adminPermissions);
+      
+      // Admin roller için cache kontrolü - cache yoksa yükle
+      const cacheKey = `campsCache_${user.email}`;
+      const cacheData = sessionStorage.getItem(cacheKey);
+      
+      if (!cacheData) {
+        loadCamps(user.email);
+      }
+    } else {
+      // Diğer roller için normal yetki kontrolü
+      fetchUserPermissions();
+      
+      // Cache kontrolü yap ve gerekirse yükle
+      if (shouldRefreshCache()) {
+        loadCamps(user.email);
+      }
+    }
     
     // Her 30 saniyede bir yetkileri kontrol et (sadece user rolündeki kullanıcılar için)
     if (user.role === 'user') {
       const interval = setInterval(fetchUserPermissions, 30000); // 30 saniye
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(interval);
+      };
     }
+
+    // Admin roller için periyodik kontrol yok
+    if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+      return () => {
+        // Admin roller için cleanup gerekmez
+      };
+    }
+
+    return () => {
+      // Genel cleanup
+    };
 
     // Şantiye admini ise bekleyen kullanıcı sayısını çek
     if (user.role === 'santiye_admin') {
@@ -142,19 +327,56 @@ export default function CampsPage() {
     try {
       const userStr = sessionStorage.getItem('currentUser');
       const user = JSON.parse(userStr || '{}');
+      
+      // Admin kullanıcılar için loading gösterme
+      const shouldShowLoading = user.role === 'user';
+      
+      if (shouldShowLoading) {
+        setIsLoading(true);
+      }
+      
       const response = await getCamps(email, user.role);
       if (response.error) {
         setError(response.error);
+        setIsLoading(false);
         return;
       }
       setCamps(response);
+      
+      // Cache'e kaydet
+      // Admin roller için otomatik yetkiler
+      let permissionsToCache = userPermissions;
+      if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+        permissionsToCache = {
+          siteAccessApproved: true,
+          sitePermissions: {
+            canViewCamps: true,
+            canEditCamps: true,
+            canCreateCamps: true
+          }
+        };
+      }
+      
+      const cacheDataToSave = {
+        data: response,
+        timestamp: Date.now(),
+        userRole: user.role,
+        permissions: permissionsToCache
+      };
+      sessionStorage.setItem(`campsCache_${email}`, JSON.stringify(cacheDataToSave));
+      setLastCacheTime(Date.now());
       
       // Admin kullanıcılar için istatistikleri yükle
       if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
         loadStats(response);
       }
+      
+      // Loading'i kapat
+      setIsLoading(false);
     } catch (error) {
       setError('Kamplar yüklenirken bir hata oluştu');
+      // Hata durumunda tüm roller için loading'i kapat
+      setIsLoading(false);
     }
   };
 
@@ -253,6 +475,18 @@ export default function CampsPage() {
         return;
       }
       setCamps([...camps, response]);
+      // Cache'i temizle - yeni kamp eklendi
+      clearCampsCache();
+      // Sadece user rolü için loading göster
+      if (currentUser?.role === 'user') {
+        setIsLoading(true);
+      }
+      
+      // Admin kullanıcılar için istatistikleri yeniden yükle
+      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
+        loadStats([...camps, response]);
+      }
+      
       setShowAddModal(false);
       setNewCamp({ name: '', description: '' });
       setError('');
@@ -287,6 +521,18 @@ export default function CampsPage() {
         setCamps([...camps, response]);
       }
       
+      // Cache'i temizle - yeni kampa katıldı
+      clearCampsCache();
+      // Sadece user rolü için loading göster
+      if (currentUser?.role === 'user') {
+        setIsLoading(true);
+      }
+      
+      // Admin kullanıcılar için istatistikleri yeniden yükle
+      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
+        loadStats([...camps, response]);
+      }
+      
       setShowJoinModal(false);
       setJoinCampCode('');
     } catch (error) {
@@ -307,7 +553,20 @@ export default function CampsPage() {
       }
       
       // Kampı listeden kaldır
-      setCamps(camps.filter(camp => camp._id !== selectedCamp._id));
+      const updatedCamps = camps.filter(camp => camp._id !== selectedCamp._id);
+      setCamps(updatedCamps);
+      // Cache'i temizle - kampa katılım iptal edildi
+      clearCampsCache();
+      // Sadece user rolü için loading göster
+      if (currentUser?.role === 'user') {
+        setIsLoading(true);
+      }
+      
+      // Admin kullanıcılar için istatistikleri yeniden yükle
+      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
+        loadStats(updatedCamps);
+      }
+      
       setShowLeaveModal(false);
       setSelectedCamp(null);
       setError('');
@@ -384,7 +643,20 @@ export default function CampsPage() {
         setError(response.error);
         return;
       }
-      setCamps(camps.map(camp => camp._id === selectedCamp._id ? response : camp));
+      const updatedCamps = camps.map(camp => camp._id === selectedCamp._id ? response : camp);
+      setCamps(updatedCamps);
+      // Cache'i temizle - kamp düzenlendi
+      clearCampsCache();
+      // Sadece user rolü için loading göster
+      if (currentUser?.role === 'user') {
+        setIsLoading(true);
+      }
+      
+      // Admin kullanıcılar için istatistikleri yeniden yükle
+      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
+        loadStats(updatedCamps);
+      }
+      
       setShowEditModal(false);
       setSelectedCamp(null);
       setError('');
@@ -401,7 +673,20 @@ export default function CampsPage() {
         setError(response.error);
         return;
       }
-      setCamps(camps.filter(camp => camp._id !== selectedCamp._id));
+      const updatedCamps = camps.filter(camp => camp._id !== selectedCamp._id);
+      setCamps(updatedCamps);
+      // Cache'i temizle - kamp silindi
+      clearCampsCache();
+      // Sadece user rolü için loading göster
+      if (currentUser?.role === 'user') {
+        setIsLoading(true);
+      }
+      
+      // Admin kullanıcılar için istatistikleri yeniden yükle
+      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
+        loadStats(updatedCamps);
+      }
+      
       setShowDeleteModal(false);
       setSelectedCamp(null);
       setError('');
@@ -490,6 +775,9 @@ export default function CampsPage() {
     currentUser?.role === 'merkez_admin' ||
     currentUser?.role === 'santiye_admin' ||
     (userPermissions?.siteAccessApproved && userPermissions?.sitePermissions?.canViewCamps);
+
+  // Cache'den yüklenen veriler varsa erişim kontrolünü geçici olarak true yap
+  const hasCachedData = lastCacheTime > 0 && camps.length > 0;
   const canCreate =
     currentUser?.role === 'kurucu_admin' ||
     currentUser?.role === 'merkez_admin' ||
@@ -526,8 +814,76 @@ export default function CampsPage() {
       style={{ backgroundImage: "url('/arka-plan-guncel-2.jpg')" }}
     >
       <Navbar />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Yetki güncelleme bildirimi */}
+      {isLoading ? (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn opacity-0" style={{ animationFillMode: 'forwards' }}>
+          <div className="flex items-center justify-center min-h-[70vh]">
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-2xl p-12 text-center max-w-md w-full border border-white/20 animate-slideUp opacity-0" style={{ animationFillMode: 'forwards' }}>
+              {/* Ana loading animasyonu */}
+              <div className="relative mb-8">
+                <div className="w-20 h-20 mx-auto relative">
+                  {/* Dış çember */}
+                  <svg className="w-20 h-20 transform -rotate-90" viewBox="0 0 80 80">
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r="36"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                      fill="none"
+                      className="text-blue-100"
+                    />
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r="36"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                      fill="none"
+                      strokeDasharray="226"
+                      strokeDashoffset="226"
+                      className="text-blue-600"
+                      style={{
+                        animation: 'spin 1.5s ease-in-out infinite'
+                      }}
+                    />
+                  </svg>
+                  
+                  {/* İç ikon */}
+                  <div className="absolute inset-0 flex items-center justify-center animate-pulse">
+                    <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Başlık ve açıklama */}
+              <h2 className="text-3xl font-bold text-gray-800 mb-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent animate-fadeIn opacity-0" style={{ animationFillMode: 'forwards' }}>
+                Yükleniyor
+              </h2>
+              <p className="text-gray-600 text-lg mb-6 animate-fadeIn opacity-0" style={{ animationDelay: '0.2s', animationFillMode: 'forwards' }}>
+                Kamp bilgileri ve erişim yetkileri kontrol ediliyor
+              </p>
+              
+              {/* Progress dots */}
+              <div className="flex justify-center space-x-2">
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '200ms' }}></div>
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '400ms' }}></div>
+              </div>
+              
+              {/* Alt bilgi */}
+              <div className="mt-8 pt-6 border-t border-gray-200 animate-fadeIn opacity-0" style={{ animationDelay: '0.4s', animationFillMode: 'forwards' }}>
+                <p className="text-sm text-gray-500">
+                  Lütfen bekleyin, bu işlem sadece birkaç saniye sürecek...
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn opacity-0" style={{ animationFillMode: 'forwards' }}>
+          {/* Yetki güncelleme bildirimi */}
         {showPermissionUpdate && (
           <div className="mb-6 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-lg">
             <div className="flex items-center">
@@ -547,7 +903,7 @@ export default function CampsPage() {
             </div>
             <button
               onClick={() => router.push('/santiye-admin-paneli')}
-              className="ml-6 px-5 py-2 rounded bg-yellow-500 hover:bg-yellow-600 text-white font-semibold shadow transition-all duration-200 relative flex items-center"
+              className="ml-6 px-5 py-2 rounded bg-yellow-500 hover:bg-yellow-600 hover:scale-105 text-white font-semibold shadow transition-all duration-300 ease-out relative flex items-center"
             >
               Şantiye Admini Paneline Git
               {pendingAccessCount > 0 && (
@@ -558,7 +914,7 @@ export default function CampsPage() {
             </button>
           </div>
         )}
-        <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8">
+        <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8 animate-slideUp opacity-0" style={{ animationDelay: '0.1s', animationFillMode: 'forwards' }}>
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -567,13 +923,18 @@ export default function CampsPage() {
               <p className="text-gray-600">
                 {isAdminUser ? 'Sistemdeki tüm kampların listesi' : 'Yönettiğiniz kampların listesi'}
               </p>
+              {lastCacheTime > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Son güncelleme: {new Date(lastCacheTime).toLocaleTimeString('tr-TR')}
+                </p>
+              )}
             </div>
             <div className="flex space-x-4">
               {hasAccess && (!isAdminUser || currentUser?.role === 'kurucu_admin') && (
                 <>
                   <button
                     onClick={() => setShowJoinModal(true)}
-                    className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200"
+                    className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-300 ease-out"
                   >
                     <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
@@ -583,7 +944,7 @@ export default function CampsPage() {
                   {canCreate && (
                     <button
                       onClick={() => setShowAddModal(true)}
-                      className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200"
+                      className="inline-flex items-center px-6 py-3 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-300 ease-out"
                     >
                       <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -597,7 +958,7 @@ export default function CampsPage() {
           </div>
         </div>
 
-        {!hasAccess && (
+        {!hasAccess && !hasCachedData && (
           <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-6 mb-8 rounded text-center text-lg font-semibold">
             Şantiye admini tarafından erişim onayınız veya kamp görüntüleme yetkiniz bulunmamaktadır. Lütfen şantiye admini ile iletişime geçin.
           </div>
@@ -612,7 +973,7 @@ export default function CampsPage() {
         {/* Admin kullanıcılar için özet istatistikler */}
         {isAdminUser && (
           loadingStats ? (
-            <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-8 mb-8 flex flex-col items-center justify-center min-h-[180px]">
+            <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-8 mb-8 flex flex-col items-center justify-center min-h-[180px] animate-fadeIn">
               <svg className="animate-spin h-8 w-8 text-blue-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
@@ -621,7 +982,7 @@ export default function CampsPage() {
             </div>
           ) : (
             overallStats && (
-              <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-6 mb-8">
+              <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-6 mb-8 animate-slideUp opacity-0" style={{ animationDelay: '0.2s', animationFillMode: 'forwards' }}>
                 {/* Kümülatif özet */}
                 <div className="mb-6">
                   <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center">
@@ -716,8 +1077,8 @@ export default function CampsPage() {
         {/* Admin kullanıcılar için şantiye bazında gruplandırılmış görünüm */}
         {isAdminUser ? (
           <div className="space-y-4">
-            {sortedSites.map((site) => (
-              <div key={site} className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg overflow-hidden">
+            {sortedSites.map((site, index) => (
+              <div key={site} className="bg-white/90 backdrop-blur-sm rounded-lg shadow-lg overflow-hidden animate-slideUp opacity-0" style={{ animationDelay: `${0.3 + index * 0.1}s`, animationFillMode: 'forwards' }}>
                 {/* Şantiye başlığı - tıklanabilir */}
                 <div 
                   onClick={() => toggleSite(site)}
@@ -754,7 +1115,8 @@ export default function CampsPage() {
                       {groupedCamps[site].map((camp) => (
                         <div
                           key={camp._id}
-                          className="bg-white/80 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl transition-all duration-300 border border-gray-200"
+                          className="bg-white/80 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl hover:scale-105 transition-all duration-500 ease-out border border-gray-200 animate-slideUp opacity-0"
+                          style={{ animationDelay: `${0.4 + index * 0.1}s`, animationFillMode: 'forwards' }}
                         >
                           <div className="p-6">
                             <div className="flex justify-between items-start">
@@ -815,10 +1177,11 @@ export default function CampsPage() {
         ) : (
           /* Normal kullanıcılar için mevcut görünüm */
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-            {camps.map((camp) => (
+            {camps.map((camp, index) => (
               <div
                 key={camp._id}
-                className="bg-white/90 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl transition-all duration-300"
+                className="bg-white/90 backdrop-blur-sm overflow-hidden rounded-lg shadow-lg hover:shadow-2xl hover:scale-105 transition-all duration-500 ease-out animate-slideUp opacity-0"
+                style={{ animationDelay: `${0.3 + index * 0.1}s`, animationFillMode: 'forwards' }}
               >
                 <div className="p-6">
                   <div className="flex justify-between items-start">
@@ -1137,6 +1500,7 @@ export default function CampsPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 } 

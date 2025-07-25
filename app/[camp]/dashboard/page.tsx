@@ -23,6 +23,7 @@ interface Camp {
 
 export default function CampDashboard({ params }: { params: { camp: string } }) {
   const router = useRouter();
+  const [isPageLoaded, setIsPageLoaded] = useState(false);
   const [stats, setStats] = useState<Stats>({
     totalRooms: 0,
     totalCapacity: 0,
@@ -34,12 +35,19 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
   const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
 
   useEffect(() => {
+    // Sayfa yükleme animasyonu
+    const timer = setTimeout(() => {
+      setIsPageLoaded(true);
+    }, 200);
+
     const campDataFromStorage = localStorage.getItem('currentCamp');
     if (campDataFromStorage) {
       const camp: Camp = JSON.parse(campDataFromStorage);
       setCurrentCamp(camp);
       loadStats(camp._id);
     }
+
+    return () => clearTimeout(timer);
   }, []);
 
   const loadStats = async (campId: string) => {
@@ -73,8 +81,8 @@ export default function CampDashboard({ params }: { params: { camp: string } }) 
   };
 
   return (
-    <div className="min-h-screen bg-[url('/arka-plan-guncel-2.jpg')] bg-cover bg-center bg-fixed">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className={`min-h-screen bg-[url('/arka-plan-guncel-2.jpg')] bg-cover bg-center bg-fixed transition-all duration-500 ease-out ${isPageLoaded ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-all duration-400 ease-out ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
         <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8">
           <div className="text-center w-full">
             <h1 className="text-2xl font-bold text-gray-900 mb-2">{currentCamp?.name}</h1>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { cache } from '@/app/lib/cache';
 
 interface Worker {
   id: number;
@@ -23,6 +24,16 @@ interface Room {
   workers: Worker[];
 }
 
+interface Camp {
+  _id: string;
+  name: string;
+  description: string;
+  userEmail: string;
+  site?: string;
+  isPublic?: boolean;
+  sharedWithSites?: string[];
+}
+
 export default function DashboardPage() {
   const [showAddRoomModal, setShowAddRoomModal] = useState(false);
   const [newRoom, setNewRoom] = useState({
@@ -30,6 +41,7 @@ export default function DashboardPage() {
     capacity: 1,
     projectOption: ''
   });
+  const [isPageLoaded, setIsPageLoaded] = useState(false);
   
   const [stats, setStats] = useState({
     totalWorkers: 0,
@@ -50,6 +62,46 @@ export default function DashboardPage() {
   const [step, setStep] = useState<'search' | 'select'>('search');
 
   const router = useRouter();
+  const [currentCamp, setCurrentCamp] = useState<Camp | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Sayfa yüklendiğinde cache'i kontrol et ve gerekirse temizle
+    if (typeof window !== 'undefined') {
+      // Performance Navigation API ile sayfa yenilenip yenilenmediğini kontrol et
+      if (performance.navigation.type === 1) {
+        cache.forceClear();
+        console.log('Dashboard: Sayfa yenilendi, cache temizlendi');
+      }
+    }
+
+    const loadCampData = async () => {
+      try {
+        setLoading(true);
+        
+        // Kamp bilgilerini al
+        const campData = localStorage.getItem('currentCamp');
+        if (campData) {
+          const camp = JSON.parse(campData) as Camp;
+          setCurrentCamp(camp);
+        }
+      } catch (error) {
+        console.error('Kamp verileri yüklenirken hata:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadCampData();
+  }, []);
+
+  // Sayfa yüklendiğinde animasyonları tetikle
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsPageLoaded(true);
+    }, 500); // Daha yumuşak geçiş için süreyi artırdım
+    return () => clearTimeout(timer);
+  }, []);
 
   const projectOptions = [
     { company: 'Slava', project: '4', label: 'Slava 4' },
@@ -324,9 +376,9 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={`min-h-screen bg-gray-50 transition-all duration-700 ease-out ${isPageLoaded ? 'opacity-100' : 'opacity-0'}`}>
       {/* Üst Menü */}
-      <nav className="bg-white shadow-lg">
+      <nav className={`bg-white shadow-lg transition-all duration-500 ease-out ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex">
@@ -367,7 +419,7 @@ export default function DashboardPage() {
             <div className="flex items-center space-x-4">
               <button
                 onClick={() => router.push('/camps')}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 hover:scale-105 transition-all duration-300 ease-out transform hover:shadow-lg"
               >
                 Kamplarım
               </button>
@@ -383,10 +435,10 @@ export default function DashboardPage() {
       </nav>
 
       {/* Ana İçerik */}
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <main className={`max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 transition-all duration-600 ease-out ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
         {/* İstatistik Kartları */}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 transition-all duration-700 ease-out ${isPageLoaded ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`bg-white overflow-hidden shadow rounded-lg transition-all duration-600 ease-out hover:shadow-xl hover:scale-105 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '0.1s' }}>
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -408,7 +460,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className={`bg-white overflow-hidden shadow rounded-lg transition-all duration-600 ease-out hover:shadow-xl hover:scale-105 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '0.2s' }}>
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -430,7 +482,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className={`bg-white overflow-hidden shadow rounded-lg transition-all duration-600 ease-out hover:shadow-xl hover:scale-105 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '0.3s' }}>
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -452,7 +504,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className={`bg-white overflow-hidden shadow rounded-lg transition-all duration-600 ease-out hover:shadow-xl hover:scale-105 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '0.4s' }}>
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -476,13 +528,13 @@ export default function DashboardPage() {
         </div>
 
         {/* Hızlı İşlemler Başlığı */}
-        <div className="mt-12">
+        <div className={`mt-12 transition-all duration-700 ease-out ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`} style={{ transitionDelay: '0.5s' }}>
           <h2 className="text-lg leading-6 font-medium text-gray-900 mb-4">Hızlı İşlemler</h2>
         </div>
 
         {/* Oda Değiştirme Kartı */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`grid grid-cols-1 md:grid-cols-3 gap-6 transition-all duration-700 ease-out ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`} style={{ transitionDelay: '0.6s' }}>
+          <div className={`bg-white overflow-hidden shadow rounded-lg transition-all duration-600 ease-out hover:shadow-xl hover:scale-105 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`} style={{ transitionDelay: '0.7s' }}>
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
@@ -523,8 +575,8 @@ export default function DashboardPage() {
 
       {/* Oda Ekleme Modalı */}
       {showAddRoomModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
-          <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center transition-all duration-300 ease-out animate-in fade-in">
+          <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-out animate-in slide-in-from-bottom-4 scale-in-95">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold text-gray-900">Yeni Oda Ekle</h2>
               <button
@@ -605,8 +657,8 @@ export default function DashboardPage() {
 
       {/* Oda Değiştirme Modalı */}
       {showChangeRoomModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
-          <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center transition-all duration-300 ease-out animate-in fade-in">
+          <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-out animate-in slide-in-from-bottom-4 scale-in-95">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-medium text-gray-900">
                 {step === 'search' ? 'İşçi Ara' : 'Oda Seç'}

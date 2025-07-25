@@ -28,6 +28,14 @@ export default function Navbar() {
   }, [params.camp]);
 
   const handleLogout = () => {
+    // Tüm kamp cache'lerini temizle
+    const keys = Object.keys(sessionStorage);
+    keys.forEach(key => {
+      if (key.startsWith('campsCache_')) {
+        sessionStorage.removeItem(key);
+      }
+    });
+    
     sessionStorage.removeItem('currentUser');
     router.push('/login');
   };
@@ -53,6 +61,14 @@ export default function Navbar() {
           <a href="/camps" className="hover:underline">Tüm Kamplar</a>
           <button
             onClick={() => {
+              // Tüm kamp cache'lerini temizle
+              const keys = Object.keys(sessionStorage);
+              keys.forEach(key => {
+                if (key.startsWith('campsCache_')) {
+                  sessionStorage.removeItem(key);
+                }
+              });
+              
               sessionStorage.removeItem('currentUser');
               router.push('/login');
             }}
@@ -80,6 +96,14 @@ export default function Navbar() {
           <a href="/camps" className="hover:underline">Kamplar</a>
           <button
             onClick={() => {
+              // Tüm kamp cache'lerini temizle
+              const keys = Object.keys(sessionStorage);
+              keys.forEach(key => {
+                if (key.startsWith('campsCache_')) {
+                  sessionStorage.removeItem(key);
+                }
+              });
+              
               sessionStorage.removeItem('currentUser');
               router.push('/login');
             }}

@@ -32,6 +32,7 @@ export default function WorkersPage() {
   const [selectedRoom, setSelectedRoom] = useState<string>('');
   const [showDropdown, setShowDropdown] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isPageLoaded, setIsPageLoaded] = useState(false);
 
   // Örnek işçi verileri
   const exampleWorkers: Worker[] = [
@@ -57,6 +58,14 @@ export default function WorkersPage() {
       project: "Slava 2-3"
     }
   ];
+
+  // Sayfa yüklendiğinde animasyonları tetikle
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsPageLoaded(true);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   // İşçileri ve odaları yükle
   useEffect(() => {
@@ -196,7 +205,7 @@ export default function WorkersPage() {
             <div className="flex items-center space-x-4">
               <button
                 onClick={() => router.push('/camps')}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 hover:scale-105 transition-all duration-300 ease-out"
               >
                 Kamplarım
               </button>
@@ -213,9 +222,9 @@ export default function WorkersPage() {
 
       {/* Ana İçerik */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
+        <div className={`px-4 py-6 sm:px-0 transition-opacity duration-500 ${isPageLoaded ? 'opacity-100' : 'opacity-0'}`}>
           {/* Arama Kutusu */}
-          <div className="mb-6">
+          <div className={`mb-6 transition-all duration-500 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`} style={{ transitionDelay: '0.1s' }}>
             <div className="max-w-md">
               <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
                 İşçi Ara
@@ -231,7 +240,7 @@ export default function WorkersPage() {
             </div>
           </div>
 
-          <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+          <div className={`bg-white shadow overflow-hidden sm:rounded-lg transition-all duration-500 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`} style={{ transitionDelay: '0.15s' }}>
             <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
               <h3 className="text-lg leading-6 font-medium text-gray-900">İşçi Listesi</h3>
             </div>
@@ -257,8 +266,8 @@ export default function WorkersPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredWorkers.map((worker) => (
-                    <tr key={worker.id}>
+                  {filteredWorkers.map((worker, index) => (
+                    <tr key={worker.id} className={`transition-all duration-500 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`} style={{ transitionDelay: `${0.2 + index * 0.03}s` }}>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">
                           {worker.name} {worker.surname}

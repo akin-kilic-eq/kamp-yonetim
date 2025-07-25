@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
+import { cache } from '@/app/lib/cache';
 
 interface User {
   email: string;
@@ -68,6 +69,15 @@ export default function SantiyeAdminPaneli() {
   }>({ rooms: [], workers: [] });
 
   useEffect(() => {
+    // Sayfa yüklendiğinde cache'i kontrol et ve gerekirse temizle
+    if (typeof window !== 'undefined') {
+      // Performance Navigation API ile sayfa yenilenip yenilenmediğini kontrol et
+      if (performance.navigation.type === 1) {
+        cache.forceClear();
+        console.log('Şantiye Admin Paneli: Sayfa yenilendi, cache temizlendi');
+      }
+    }
+
     const fetchUsers = async () => {
       setLoading(true);
       setError("");

@@ -36,6 +36,7 @@ export default function RoomsPage() {
   const [showEditWorkerModal, setShowEditWorkerModal] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [expandedRoomId, setExpandedRoomId] = useState<number | null>(null);
+  const [isPageLoaded, setIsPageLoaded] = useState(false);
   const [newRoom, setNewRoom] = useState({
     number: '',
     capacity: 1,
@@ -59,6 +60,14 @@ export default function RoomsPage() {
     { company: 'Slava', project: '4', label: 'Slava 4' },
     { company: 'Slava', project: '2-3', label: 'Slava 2-3' }
   ];
+
+  // Sayfa yüklendiğinde animasyonları tetikle
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsPageLoaded(true);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Örnek veriler
   const defaultRooms: Room[] = [
@@ -393,8 +402,8 @@ export default function RoomsPage() {
 
       {/* Ana İçerik */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
-          <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+        <div className={`px-4 py-6 sm:px-0 transition-opacity duration-500 ${isPageLoaded ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`bg-white shadow overflow-hidden sm:rounded-lg transition-all duration-500 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`} style={{ transitionDelay: '0.1s' }}>
             <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
               <h3 className="text-lg leading-6 font-medium text-gray-900">Odalar</h3>
               <button
@@ -405,15 +414,15 @@ export default function RoomsPage() {
                   }
                   setShowAddRoomModal(true);
                 }}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-300 ease-out"
               >
                 Yeni Oda Ekle
               </button>
             </div>
             <div className="border-t border-gray-200">
               <ul className="divide-y divide-gray-200">
-                {rooms.map((room) => (
-                  <li key={room.id} className="hover:bg-gray-50">
+                {rooms.map((room, index) => (
+                  <li key={room.id} className={`hover:bg-gray-50 transition-all duration-500 ${isPageLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`} style={{ transitionDelay: `${0.2 + index * 0.05}s` }}>
                     <div 
                       className="px-4 py-4 sm:px-6 cursor-pointer"
                       onClick={() => toggleRoomExpand(room)}
