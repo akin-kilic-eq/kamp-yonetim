@@ -177,18 +177,40 @@ export default function RoomsPage() {
       setLoading(true);
       setError('');
 
-      // Odaları çek
-      const response = await getRooms(campId, forceRefresh);
-      if ('error' in response && typeof response.error === 'string') {
-        setError(response.error);
+      // Odaları ve işçileri paralel olarak çek
+      const [roomsResponse, workersResponse] = await Promise.all([
+        getRooms(campId, forceRefresh),
+        getWorkers(campId) // Tüm işçileri tek seferde çek
+      ]);
+
+      if ('error' in roomsResponse && typeof roomsResponse.error === 'string') {
+        setError(roomsResponse.error);
         return;
       }
+
       // Gelen odaları numaralarına göre sırala
-      const sortedRooms = response.sort((a, b) => {
-        // 'number' alanının sayısal olarak karşılaştırılması
+      const sortedRooms = roomsResponse.sort((a, b) => {
         return a.number.localeCompare(b.number, undefined, { numeric: true });
       });
       setRooms(sortedRooms);
+
+      // İşçileri oda bazında grupla
+      if (Array.isArray(workersResponse)) {
+        const workersByRoom: { [roomId: string]: any[] } = {};
+        
+        workersResponse.forEach(worker => {
+          const roomId = typeof worker.roomId === 'object' && worker.roomId !== null 
+            ? worker.roomId._id 
+            : worker.roomId as string;
+          
+          if (!workersByRoom[roomId]) {
+            workersByRoom[roomId] = [];
+          }
+          workersByRoom[roomId].push(worker);
+        });
+        
+        setRoomWorkers(workersByRoom);
+      }
     } catch (error) {
       setError('Odalar yüklenirken bir hata oluştu');
     } finally {
@@ -300,16 +322,7 @@ export default function RoomsPage() {
     };
   }, []);
 
-  // Oda detayını açınca işçileri çek
-  useEffect(() => {
-    if (expandedRoomId && currentCamp?._id) {
-      getWorkers(currentCamp._id, expandedRoomId).then((data) => {
-        if (Array.isArray(data)) {
-          setRoomWorkers((prev) => ({ ...prev, [expandedRoomId]: data }));
-        }
-      });
-    }
-  }, [expandedRoomId, currentCamp]);
+  // Oda detayını açınca işçileri çek - Artık gerekli değil, tüm işçiler zaten yüklendi
 
   // İşçi düzenleme modalı açıldığında editFullName'i doldur
   useEffect(() => {
@@ -439,17 +452,7 @@ export default function RoomsPage() {
     }
 
     setExpandedRoomId(roomId);
-    
-    try {
-      const response = await getWorkers(currentCamp!._id, roomId);
-      if ('error' in response && typeof response.error === 'string') {
-        setError(response.error);
-        return;
-      }
-      setRoomWorkers(prev => ({ ...prev, [roomId]: response }));
-    } catch (error) {
-      setError('İşçi bilgileri yüklenirken bir hata oluştu');
-    }
+    // İşçiler zaten yüklendi, ekstra API çağrısına gerek yok
   };
 
   const handleAddWorker = async (roomId: string) => {
@@ -475,10 +478,8 @@ export default function RoomsPage() {
           project: '', 
           entryDate: new Date().toISOString().split('T')[0] 
         });
-        getWorkers(currentCamp._id, roomId).then((data) => {
-          if(Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
-        });
-        if (currentCamp) loadRooms(currentCamp._id, true); // forceRefresh ile çağır
+        // Tüm odaları ve işçileri yeniden yükle
+        if (currentCamp) loadRooms(currentCamp._id, true);
       } else {
         setError(res.error);
         setShowAddWorkerModal(false);
@@ -491,9 +492,8 @@ export default function RoomsPage() {
     }
   };
 
-// İşçi ekleme modalı açılırken rooms'u forceRefresh ile güncelle
+// İşçi ekleme modalı açılırken
 const openAddWorkerModal = (room: Room) => {
-  if (currentCamp) loadRooms(currentCamp._id, true);
   setSelectedRoom(room);
   setShowAddWorkerModal(true);
 }
@@ -507,13 +507,8 @@ const openAddWorkerModal = (room: Room) => {
       if (!res.error) {
         setShowEditWorkerModal(false);
         setSelectedWorker(null);
-        const roomId = typeof res.roomId === 'object' ? res.roomId._id : res.roomId;
-        if (roomId) {
-            getWorkers(currentCamp._id, roomId).then((data) => {
-              if (Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [roomId]: data }));
-            });
-        }
-        loadRooms(currentCamp._id);
+        // Tüm odaları ve işçileri yeniden yükle
+        loadRooms(currentCamp._id, true);
       } else {
         setError(res.error);
       }
@@ -529,17 +524,8 @@ const openAddWorkerModal = (room: Room) => {
       const res = await deleteWorker(workerId, currentUserEmail, currentCamp._id);
       console.log('Silme API yanıtı:', res);
       if (!res.error) {
-        const campId = currentCamp._id;
-        getWorkers(campId, roomId).then((data) => {
-          console.log('Yeni işçi listesi:', data);
-          setRoomWorkers((prev) => ({
-            ...prev,
-            [roomId]: Array.isArray(data)
-              ? data.filter(worker => worker._id !== workerId)
-              : []
-          }));
-        });
-        loadRooms(campId, true); // forceRefresh ile çağır
+        // Tüm odaları ve işçileri yeniden yükle
+        loadRooms(currentCamp._id, true);
       } else {
         setError(res.error);
       }
@@ -573,16 +559,8 @@ const openAddWorkerModal = (room: Room) => {
         setShowChangeRoomModal(false);
         setSelectedWorker(null);
 
-        // Eski ve yeni odaların işçi listelerini güncelle
-        const campId = currentCamp!._id;
-        getWorkers(campId, oldRoomId).then((data) => {
-          if (Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [oldRoomId]: data }));
-        });
-        getWorkers(campId, newRoomId).then((data) => {
-          if (Array.isArray(data)) setRoomWorkers((prev) => ({ ...prev, [newRoomId]: data }));
-        });
-        // Genel oda listesini de güncelle (doluluk oranları için)
-        loadRooms(campId);
+        // Tüm odaları ve işçileri yeniden yükle
+        loadRooms(currentCamp._id, true);
         
       } else {
         setError(res.error);
@@ -592,17 +570,7 @@ const openAddWorkerModal = (room: Room) => {
     }
   };
 
-  useEffect(() => {
-    if (rooms.length && currentCamp?._id) {
-      rooms.forEach(room => {
-        getWorkers(currentCamp._id, room._id).then((data) => {
-          if (Array.isArray(data)) {
-            setRoomWorkers(prev => ({ ...prev, [room._id]: data }));
-          }
-        });
-      });
-    }
-  }, [rooms, currentCamp]);
+  // Bu useEffect artık gerekli değil, tüm işçiler loadRooms içinde yükleniyor
 
   return (
     <div className="container mx-auto px-4 py-8">
