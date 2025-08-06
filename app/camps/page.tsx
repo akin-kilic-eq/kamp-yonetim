@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getCamps, createCamp, updateCamp, deleteCamp, generateShareCodes, joinCamp, leaveCamp } from '../services/api';
 import Navbar from '@/components/Navbar';
@@ -17,6 +17,8 @@ interface Camp {
   };
   creatorSite?: string; // Yeni eklenen alan
   site?: string; // Kampın şantiye bilgisi
+  isPublic?: boolean; // Ortak kullanım açık mı
+  sharedWithSites?: string[]; // Paylaşılan şantiyeler
 }
 
 interface SiteStats {
@@ -36,6 +38,7 @@ interface OverallStats {
   occupancyRate: number;
   totalCamps: number;
   totalSites: number;
+  santiyeAdminWorkers?: number;
 }
 
 export default function CampsPage() {
@@ -69,6 +72,44 @@ export default function CampsPage() {
   const [pendingAccessCount, setPendingAccessCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   
+  // Modal state'leri
+  const [showWorkersModal, setShowWorkersModal] = useState(false);
+  const [showCapacityModal, setShowCapacityModal] = useState(false);
+  const [showOccupancyModal, setShowOccupancyModal] = useState(false);
+  
+  // Kamp detayları için state'ler
+  const [campDetails, setCampDetails] = useState<Record<string, any>>({});
+  const [loadingCampDetails, setLoadingCampDetails] = useState(false);
+  const [siteNames, setSiteNames] = useState<Record<string, string>>({});
+  
+  // loadStats'ın çağrılıp çağrılmadığını takip etmek için ref
+  const statsLoadedRef = useRef(false);
+  
+  // Santiye admin için ayrı işçi sayısı state'i
+  const [santiyeAdminWorkerCount, setSantiyeAdminWorkerCount] = useState<number>(0);
+  const [santiyeAdminWorkersLoaded, setSantiyeAdminWorkersLoaded] = useState<boolean>(false);
+  
+  // İşçi sayısını hesaplayan memoized değer - STABİL VERSİYON
+  const workerCount = useMemo(() => {
+    if (!overallStats) return 0;
+    
+    // Santiye admin için ayrı state'ten al
+    if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+      return santiyeAdminWorkerCount;
+    }
+    
+    // Diğer roller için genel toplam
+    return overallStats.totalWorkers || 0;
+  }, [santiyeAdminWorkerCount, overallStats?.totalWorkers, currentUser?.role, currentUser?.site]);
+  
+  // Santiye admin için loading state kontrolü
+  const isWorkerCountLoading = useMemo(() => {
+    if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+      return loadingStats || !santiyeAdminWorkersLoaded;
+    }
+    return loadingStats || !overallStats;
+  }, [loadingStats, santiyeAdminWorkersLoaded, overallStats, currentUser?.role, currentUser?.site]);
+  
   // İlk yükleme için cache kontrolü - tüm kullanıcılar için
   useEffect(() => {
     const userSession = sessionStorage.getItem('currentUser');
@@ -95,8 +136,10 @@ export default function CampsPage() {
             setLastCacheTime(timestamp);
             setIsLoading(false);
             
-            // Admin kullanıcılar için istatistikleri yükle (her zaman güncel veriler)
-            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+            // Admin kullanıcılar için istatistikleri hemen yükle
+            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin' || user.role === 'santiye_admin') {
+              // İstatistikleri hemen yükle, loading state'ini true yap
+              setLoadingStats(true);
               loadStats(data);
             }
             return; // Ana useEffect'in çalışmasını engelle
@@ -107,14 +150,16 @@ export default function CampsPage() {
             setLastCacheTime(timestamp);
             setIsLoading(false);
             
-            // Admin kullanıcılar için istatistikleri yükle (her zaman güncel veriler)
-            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+            // Admin kullanıcılar için istatistikleri hemen yükle
+            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin' || user.role === 'santiye_admin') {
+              // İstatistikleri hemen yükle, loading state'ini true yap
+              setLoadingStats(true);
               loadStats(data);
             }
             
-            // Arka planda yenile
+            // Arka planda yenile - loadStats'ı tekrar çağırmamak için flag kullan
             setTimeout(() => {
-              loadCamps(user.email);
+              loadCamps(user.email, true); // true = arka plan yenileme
             }, 100);
             return; // Ana useEffect'in çalışmasını engelle
           }
@@ -135,6 +180,11 @@ export default function CampsPage() {
       sessionStorage.removeItem(cacheKey);
       console.log('Kamp cache temizlendi:', cacheKey);
     }
+    // Cache temizlendiğinde stats ref'ini sıfırla
+    statsLoadedRef.current = false;
+    // Santiye admin işçi sayısını da sıfırla
+    setSantiyeAdminWorkerCount(0);
+    setSantiyeAdminWorkersLoaded(false);
   };
 
   // Yetkiler değiştiğinde cache'i temizle
@@ -157,173 +207,37 @@ export default function CampsPage() {
       if (currentUser.role === 'user') {
         setIsLoading(true);
       }
-      loadCamps(currentUser.email);
+      loadCamps(currentUser.email, false);
     }
   };
 
   useEffect(() => {
-    // Oturum kontrolü
-    const userSession = sessionStorage.getItem('currentUser');
-    if (!userSession) {
-      router.push('/login');
-      return;
-    }
-    const user = JSON.parse(userSession);
-    setCurrentUser(user);
-    
-      // Cache kontrolü ve yükleme
-  const shouldRefreshCache = () => {
-    const cacheKey = `campsCache_${user.email}`;
-    const cacheData = sessionStorage.getItem(cacheKey);
-    
-    if (!cacheData) return true; // Cache yoksa yenile
-    
-    try {
-      const { data, timestamp, userRole, permissions } = JSON.parse(cacheData);
-      const now = Date.now();
-      const cacheAge = now - timestamp;
+    const userStr = sessionStorage.getItem('currentUser');
+    if (userStr) {
+      const user = JSON.parse(userStr);
+      setCurrentUser(user);
       
-      // Admin roller için daha uzun cache süresi (30 dakika)
-      const maxCacheAge = (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') 
-        ? 30 * 60 * 1000  // 30 dakika
-        : 5 * 60 * 1000;  // 5 dakika
-      
-      // Cache süresi dolmuşsa veya kullanıcı rolü değiştiyse yenile
-      if (cacheAge > maxCacheAge || userRole !== user.role) {
-        return true;
-      }
-      
-      // Cache geçerliyse kullan
-      setCamps(data);
-      setUserPermissions(permissions);
-      setLastCacheTime(timestamp);
-      setIsLoading(false);
-      return false;
-    } catch (error) {
-      console.error('Cache parse hatası:', error);
-      return true; // Hata durumunda yenile
-    }
-  };
-    
-    // Kullanıcı yetkilerini çek
-    const fetchUserPermissions = () => {
-      fetch(`/api/users?email=${user.email}`)
-        .then(res => res.json())
-        .then(data => {
-          // Eğer tek kullanıcı dönerse
-          const me = Array.isArray(data) ? data.find((u:any) => u.email === user.email) : data;
-          const newPermissions = {
-            siteAccessApproved: me?.siteAccessApproved,
-            sitePermissions: me?.sitePermissions
-          };
-          
-          // Yetkiler değiştiyse session'ı güncelle
-          const currentSession = sessionStorage.getItem('currentUser');
-          if (currentSession) {
-            const currentUser = JSON.parse(currentSession);
-            if (currentUser.siteAccessApproved !== newPermissions.siteAccessApproved ||
-                JSON.stringify(currentUser.sitePermissions) !== JSON.stringify(newPermissions.sitePermissions)) {
-              
-              const updatedUser = {
-                ...currentUser,
-                siteAccessApproved: newPermissions.siteAccessApproved,
-                sitePermissions: newPermissions.sitePermissions
-              };
-              sessionStorage.setItem('currentUser', JSON.stringify(updatedUser));
-              
-              // Kullanıcıya bilgi ver
-              console.log('Yetkileriniz güncellendi!');
-              setShowPermissionUpdate(true);
-              setTimeout(() => setShowPermissionUpdate(false), 5000); // 5 saniye sonra gizle
-              
-              // Yetkiler değiştiyse cache'i temizle
-              clearCacheOnPermissionChange();
-            }
-          }
-          
-          setUserPermissions(newPermissions);
-          
-          // Cache'i güncelle (eğer varsa)
-          const cacheKey = `campsCache_${user.email}`;
-          const existingCache = sessionStorage.getItem(cacheKey);
-          if (existingCache) {
-            try {
-              const cacheData = JSON.parse(existingCache);
-              cacheData.permissions = newPermissions;
-              sessionStorage.setItem(cacheKey, JSON.stringify(cacheData));
-            } catch (error) {
-              console.error('Cache güncelleme hatası:', error);
-            }
-          }
-        })
-        .catch(() => {
-          setUserPermissions(null);
-        });
-    };
-    
-    // Admin roller için özel kontrol - yetki kontrolü yapma
-    if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
-      // Admin roller için otomatik yetkiler
-      const adminPermissions = {
-        siteAccessApproved: true,
-        sitePermissions: {
-          canViewCamps: true,
-          canEditCamps: true,
-          canCreateCamps: true
-        }
-      };
-      setUserPermissions(adminPermissions);
-      
-      // Admin roller için cache kontrolü - cache yoksa yükle
-      const cacheKey = `campsCache_${user.email}`;
-      const cacheData = sessionStorage.getItem(cacheKey);
-      
-      if (!cacheData) {
-        loadCamps(user.email);
-      }
+      // Kullanıcı yüklendikten sonra kampları yükle
+      loadCamps(user.email, false);
     } else {
-      // Diğer roller için normal yetki kontrolü
-      fetchUserPermissions();
-      
-      // Cache kontrolü yap ve gerekirse yükle
-      if (shouldRefreshCache()) {
-        loadCamps(user.email);
-      }
-    }
-    
-    // Her 30 saniyede bir yetkileri kontrol et (sadece user rolündeki kullanıcılar için)
-    if (user.role === 'user') {
-      const interval = setInterval(fetchUserPermissions, 30000); // 30 saniye
-      return () => {
-        clearInterval(interval);
-      };
-    }
-
-    // Admin roller için periyodik kontrol yok
-    if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
-      return () => {
-        // Admin roller için cleanup gerekmez
-      };
-    }
-
-    return () => {
-      // Genel cleanup
-    };
-
-    // Şantiye admini ise bekleyen kullanıcı sayısını çek
-    if (user.role === 'santiye_admin') {
-      fetch(`/api/users?pendingCount=true&email=${user.email}`)
-        .then(res => res.json())
-        .then(data => {
-          if (typeof data.count === 'number') setPendingAccessCount(data.count);
-        })
-        .catch(err => {
-          console.error('Bekleyen kullanıcı sayısı çekilirken hata:', err);
-        });
+      router.push('/login');
     }
   }, [router]);
 
-  const loadCamps = async (email: string) => {
+  // currentUser değiştiğinde istatistikleri yükle
+  useEffect(() => {
+    if (currentUser && camps.length > 0 && !statsLoadedRef.current) {
+      if (currentUser.role === 'kurucu_admin' || currentUser.role === 'merkez_admin' || currentUser.role === 'santiye_admin') {
+        // İstatistikleri yükle ve loading state'ini true yap
+        setLoadingStats(true);
+        loadStats(camps);
+        loadSiteNames();
+        statsLoadedRef.current = true;
+      }
+    }
+  }, [currentUser, camps]);
+
+  const loadCamps = async (email: string, isBackgroundRefresh: boolean = false) => {
     try {
       const userStr = sessionStorage.getItem('currentUser');
       const user = JSON.parse(userStr || '{}');
@@ -366,14 +280,17 @@ export default function CampsPage() {
       sessionStorage.setItem(`campsCache_${email}`, JSON.stringify(cacheDataToSave));
       setLastCacheTime(Date.now());
       
-      // Admin kullanıcılar için istatistikleri yükle
-      if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+      // Admin kullanıcılar için istatistikleri hemen yükle (sadece ilk yüklemede)
+      if (!isBackgroundRefresh && (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin')) {
+        setLoadingStats(true);
         loadStats(response);
+        loadSiteNames();
       }
       
       // Loading'i kapat
       setIsLoading(false);
     } catch (error) {
+      console.error('Kamplar yüklenirken hata:', error);
       setError('Kamplar yüklenirken bir hata oluştu');
       // Hata durumunda tüm roller için loading'i kapat
       setIsLoading(false);
@@ -389,34 +306,100 @@ export default function CampsPage() {
       let totalBeds = 0;
       let occupiedBeds = 0;
 
-      // Her kamp için istatistikleri çek
+      // 1. Tüm işçileri getir ve şantiye bazında grupla - EN BAŞTA YAP
+      const workersResponse = await fetch('/api/workers');
+      const allWorkers = await workersResponse.json();
+      
+      // İşçileri şantiye bazında grupla
+      const workersBySite: Record<string, number> = {};
+      allWorkers.forEach((worker: any) => {
+        const site = worker.project || 'Şantiye Belirtilmemiş';
+        workersBySite[site] = (workersBySite[site] || 0) + 1;
+      });
+      
+      // Santiye admin için işçi sayısını hemen hesapla
+      let santiyeAdminWorkers = 0;
+      if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+        const userSite = currentUser.site;
+        const userSiteCamps = campsData.filter(camp => 
+          camp.creatorSite === userSite || camp.site === userSite
+        );
+        
+        const userSiteCampIds = userSiteCamps.map(camp => camp._id);
+        const filteredWorkers = allWorkers.filter((worker: any) => 
+          worker.campId && userSiteCampIds.includes(worker.campId.toString())
+        );
+        santiyeAdminWorkers = filteredWorkers.length;
+        
+        console.log('Santiye Admin Debug:', {
+          userSite,
+          userSiteCamps: userSiteCamps.length,
+          userSiteCampIds,
+          totalWorkers: allWorkers.length,
+          filteredWorkers: filteredWorkers.length,
+          santiyeAdminWorkers
+        });
+      }
+
+      // 2. Tüm kampları tek seferde işle
       for (const camp of campsData) {
         try {
           const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
           const campStats = await response.json();
-          
           if (campStats && !campStats.error) {
-            const site = camp.creatorSite || 'Şantiye Belirtilmemiş';
+            const campSite = camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş';
             
-            if (!stats[site]) {
-              stats[site] = {
+            // Kampın kendi şantiyesi için istatistikler
+            if (!stats[campSite]) {
+              stats[campSite] = {
                 totalWorkers: 0,
-                totalBeds: 0, // totalBeds -> totalCapacity
-                occupiedBeds: 0, // occupiedBeds -> totalWorkers
+                totalBeds: 0,
+                occupiedBeds: 0,
                 availableBeds: 0,
                 occupancyRate: 0,
                 campCount: 0
               };
             }
             
-            stats[site].totalWorkers += campStats.totalWorkers || 0;
-            stats[site].totalBeds += campStats.totalCapacity || 0;
-            stats[site].occupiedBeds += campStats.totalWorkers || 0;
-            stats[site].campCount += 1;
-            
-            totalWorkers += campStats.totalWorkers || 0;
+            // Kapasite: Kampın kendi şantiyesine yazılır
+            stats[campSite].totalBeds += campStats.totalCapacity || 0;
+            stats[campSite].occupiedBeds += campStats.totalWorkers || 0;
+            stats[campSite].campCount += 1;
             totalBeds += campStats.totalCapacity || 0;
             occupiedBeds += campStats.totalWorkers || 0;
+            
+            // İşçi sayısı: Sadece o şantiyeye ait işçileri say
+            if (campStats.siteStats && campStats.siteStats[campSite]) {
+              stats[campSite].totalWorkers += campStats.siteStats[campSite].workers || 0;
+            }
+            
+            // Ortak kullanımlı kamplar için diğer şantiyelerin istatistikleri
+            if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
+              camp.sharedWithSites.forEach((sharedSiteId: string) => {
+                // Şantiye ID'sini isme çevir
+                const sharedSite = campStats.availableSites?.find((site: any) => site._id === sharedSiteId);
+                if (sharedSite && campStats.siteStats && campStats.siteStats[sharedSite.name]) {
+                  const sharedSiteName = sharedSite.name;
+                  
+                  if (!stats[sharedSiteName]) {
+                    stats[sharedSiteName] = {
+                      totalWorkers: 0,
+                      totalBeds: 0,
+                      occupiedBeds: 0,
+                      availableBeds: 0,
+                      occupancyRate: 0,
+                      campCount: 0
+                    };
+                  }
+                  
+                  // Ortak kullanımlı şantiyeler için sadece o şantiyeye ait işçileri say
+                  stats[sharedSiteName].totalWorkers += campStats.siteStats[sharedSiteName].workers || 0;
+                  stats[sharedSiteName].totalBeds += campStats.siteStats[sharedSiteName].capacity || 0;
+                  stats[sharedSiteName].occupiedBeds += campStats.siteStats[sharedSiteName].workers || 0;
+                  stats[sharedSiteName].campCount += 1;
+                }
+              });
+            }
           }
         } catch (error) {
           console.error(`Kamp ${camp._id} istatistikleri yüklenemedi:`, error);
@@ -431,6 +414,18 @@ export default function CampsPage() {
           : 0;
       });
 
+      // Sadece ortak kullanımlı şantiyelerdeki işçileri topla
+      Object.keys(stats).forEach(site => {
+        const hasSharedCamps = campsData.some(camp => 
+          camp.creatorSite === site && camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0
+        );
+        if (hasSharedCamps) {
+          totalWorkers += stats[site].totalWorkers;
+        }
+      });
+
+
+
       // Genel istatistikleri hesapla
       const overall: OverallStats = {
         totalWorkers,
@@ -439,15 +434,23 @@ export default function CampsPage() {
         availableBeds: totalBeds - occupiedBeds,
         occupancyRate: totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0,
         totalCamps: campsData.length,
-        totalSites: Object.keys(stats).length
+        totalSites: Object.keys(stats).length,
+        santiyeAdminWorkers
       };
 
       setSiteStats(stats);
       setOverallStats(overall);
+      
+      // Santiye admin için işçi sayısını ayrı state'e kaydet
+      if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+        setSantiyeAdminWorkerCount(santiyeAdminWorkers);
+        setSantiyeAdminWorkersLoaded(true);
+      }
     } catch (error) {
       console.error('İstatistikler yüklenirken hata:', error);
     } finally {
       setLoadingStats(false);
+      statsLoadedRef.current = true; // İstatistikler yüklendiğini işaretle
     }
   };
 
@@ -482,10 +485,8 @@ export default function CampsPage() {
         setIsLoading(true);
       }
       
-      // Admin kullanıcılar için istatistikleri yeniden yükle
-      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
-        loadStats([...camps, response]);
-      }
+      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
+      statsLoadedRef.current = false;
       
       setShowAddModal(false);
       setNewCamp({ name: '', description: '' });
@@ -528,10 +529,8 @@ export default function CampsPage() {
         setIsLoading(true);
       }
       
-      // Admin kullanıcılar için istatistikleri yeniden yükle
-      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
-        loadStats([...camps, response]);
-      }
+      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
+      statsLoadedRef.current = false;
       
       setShowJoinModal(false);
       setJoinCampCode('');
@@ -562,10 +561,8 @@ export default function CampsPage() {
         setIsLoading(true);
       }
       
-      // Admin kullanıcılar için istatistikleri yeniden yükle
-      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
-        loadStats(updatedCamps);
-      }
+      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
+      statsLoadedRef.current = false;
       
       setShowLeaveModal(false);
       setSelectedCamp(null);
@@ -652,10 +649,8 @@ export default function CampsPage() {
         setIsLoading(true);
       }
       
-      // Admin kullanıcılar için istatistikleri yeniden yükle
-      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
-        loadStats(updatedCamps);
-      }
+      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
+      statsLoadedRef.current = false;
       
       setShowEditModal(false);
       setSelectedCamp(null);
@@ -682,10 +677,8 @@ export default function CampsPage() {
         setIsLoading(true);
       }
       
-      // Admin kullanıcılar için istatistikleri yeniden yükle
-      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
-        loadStats(updatedCamps);
-      }
+      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
+      statsLoadedRef.current = false;
       
       setShowDeleteModal(false);
       setSelectedCamp(null);
@@ -808,6 +801,56 @@ export default function CampsPage() {
     setExpandedSites(newExpandedSites);
   };
 
+  // Şantiye adlarını yükle
+  const loadSiteNames = async () => {
+    try {
+      const response = await fetch('/api/sites');
+      if (response.ok) {
+        const sites = await response.json();
+        const namesMap = sites.reduce((acc: Record<string, string>, site: any) => {
+          acc[site._id] = site.name;
+          return acc;
+        }, {});
+        setSiteNames(namesMap);
+      }
+    } catch (error) {
+      console.error('Şantiye adları yüklenirken hata:', error);
+    }
+  };
+
+  // Kamp detaylarını çek
+  const loadCampDetails = async () => {
+    setLoadingCampDetails(true);
+    try {
+      const details: Record<string, any> = {};
+      
+      for (const camp of camps) {
+        try {
+          const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
+          const campStats = await response.json();
+          
+          if (campStats && !campStats.error) {
+            details[camp._id] = {
+              ...campStats,
+              campName: camp.name,
+              campSite: camp.creatorSite || camp.site,
+              isPublic: camp.isPublic,
+              sharedWithSites: camp.sharedWithSites
+            };
+          }
+        } catch (error) {
+          console.error(`Kamp ${camp._id} detayları yüklenemedi:`, error);
+        }
+      }
+      
+      setCampDetails(details);
+    } catch (error) {
+      console.error('Kamp detayları yüklenirken hata:', error);
+    } finally {
+      setLoadingCampDetails(false);
+    }
+  };
+
   return (
     <div
       className="min-h-screen bg-cover bg-center bg-fixed"
@@ -914,6 +957,133 @@ export default function CampsPage() {
             </button>
           </div>
         )}
+
+        {/* Şantiye admini için şantiye özeti - YENİ TASARIM */}
+        {currentUser?.role === 'santiye_admin' && (
+          <div className="bg-gradient-to-br from-slate-50 to-blue-50 border border-slate-200 rounded-2xl shadow-xl p-8 mb-8 animate-slideUp opacity-0" style={{ animationDelay: '0.15s', animationFillMode: 'forwards' }}>
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center">
+                <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center mr-5 shadow-lg">
+                  <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-800 mb-1">Şantiye Özeti</h2>
+                  <p className="text-slate-600 text-lg">Yönettiğiniz şantiyenin genel durumu</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm text-slate-500 font-medium">Son güncelleme</div>
+                <div className="text-xl font-bold text-slate-700">{new Date().toLocaleTimeString('tr-TR')}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              {/* Toplam Kamp Sayısı */}
+              <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/60 hover:shadow-xl transition-all duration-300 hover:scale-105 group">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600 mb-2">Toplam Kamp</p>
+                    <p className="text-4xl font-bold text-blue-600 group-hover:text-blue-700 transition-colors">{camps.length}</p>
+                  </div>
+                  <div className="w-14 h-14 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              {/* Toplam İşçi Sayısı */}
+              <div 
+                className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/60 hover:shadow-xl transition-all duration-300 hover:scale-105 cursor-pointer group"
+                onClick={() => {
+                  setShowWorkersModal(true);
+                  loadCampDetails();
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600 mb-2">Toplam İşçi</p>
+                    {isWorkerCountLoading ? (
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 border-3 border-emerald-200 border-t-emerald-600 rounded-full animate-spin"></div>
+                        <span className="text-lg text-slate-500 font-medium">Yükleniyor...</span>
+                      </div>
+                    ) : (
+                      <p className="text-4xl font-bold text-emerald-600 group-hover:text-emerald-700 transition-colors">
+                        {workerCount}
+                      </p>
+                    )}
+                  </div>
+                  <div className="w-14 h-14 bg-gradient-to-br from-emerald-100 to-emerald-200 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg className="w-7 h-7 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              {/* Toplam Kapasite */}
+              <div 
+                className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/60 hover:shadow-xl transition-all duration-300 hover:scale-105 cursor-pointer group"
+                onClick={() => {
+                  setShowCapacityModal(true);
+                  loadCampDetails();
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600 mb-2">Toplam Kapasite</p>
+                    {loadingStats || !overallStats ? (
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 border-3 border-amber-200 border-t-amber-600 rounded-full animate-spin"></div>
+                        <span className="text-lg text-slate-500 font-medium">Yükleniyor...</span>
+                      </div>
+                    ) : (
+                      <p className="text-4xl font-bold text-amber-600 group-hover:text-amber-700 transition-colors">{overallStats?.totalBeds || 0}</p>
+                    )}
+                  </div>
+                  <div className="w-14 h-14 bg-gradient-to-br from-amber-100 to-amber-200 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg className="w-7 h-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v6H8V5z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              {/* Doluluk Oranı */}
+              <div 
+                className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/60 hover:shadow-xl transition-all duration-300 hover:scale-105 cursor-pointer group"
+                onClick={() => {
+                  setShowOccupancyModal(true);
+                  loadCampDetails();
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600 mb-2">Doluluk Oranı</p>
+                    {loadingStats || !overallStats ? (
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 border-3 border-violet-200 border-t-violet-600 rounded-full animate-spin"></div>
+                        <span className="text-lg text-slate-500 font-medium">Yükleniyor...</span>
+                      </div>
+                    ) : (
+                      <p className="text-4xl font-bold text-violet-600 group-hover:text-violet-700 transition-colors">%{overallStats?.occupancyRate || 0}</p>
+                    )}
+                  </div>
+                  <div className="w-14 h-14 bg-gradient-to-br from-violet-100 to-violet-200 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg className="w-7 h-7 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-8 animate-slideUp opacity-0" style={{ animationDelay: '0.1s', animationFillMode: 'forwards' }}>
           <div className="flex justify-between items-center">
             <div>
@@ -992,21 +1162,21 @@ export default function CampsPage() {
                     Genel Özet
                   </h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                      <div className="text-2xl font-bold text-blue-600">{overallStats.totalWorkers}</div>
-                      <div className="text-sm text-blue-700">Toplam İşçi</div>
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200 shadow-sm">
+                      <div className="text-2xl font-bold text-blue-600">{overallStats.totalWorkers.toLocaleString()}</div>
+                      <div className="text-sm text-blue-700 font-medium">Toplam İşçi</div>
                     </div>
-                    <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                      <div className="text-2xl font-bold text-green-600">{overallStats.totalBeds}</div>
-                      <div className="text-sm text-green-700">Toplam Yatak</div>
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200 shadow-sm">
+                      <div className="text-2xl font-bold text-green-600">{overallStats.totalBeds.toLocaleString()}</div>
+                      <div className="text-sm text-green-700 font-medium">Toplam Yatak</div>
                     </div>
-                    <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                      <div className="text-2xl font-bold text-yellow-600">{overallStats.availableBeds}</div>
-                      <div className="text-sm text-yellow-700">Boş Yatak</div>
+                    <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 p-4 rounded-lg border border-yellow-200 shadow-sm">
+                      <div className="text-2xl font-bold text-yellow-600">{overallStats.availableBeds.toLocaleString()}</div>
+                      <div className="text-sm text-yellow-700 font-medium">Boş Yatak</div>
                     </div>
-                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg border border-purple-200 shadow-sm">
                       <div className="text-2xl font-bold text-purple-600">%{overallStats.occupancyRate}</div>
-                      <div className="text-sm text-purple-700">Doluluk Oranı</div>
+                      <div className="text-sm text-purple-700 font-medium">Doluluk Oranı</div>
                     </div>
                   </div>
                 </div>
@@ -1015,7 +1185,7 @@ export default function CampsPage() {
                 <div>
                   <div 
                     onClick={() => setExpandedStats(!expandedStats)}
-                    className="cursor-pointer hover:bg-gray-50 p-4 rounded-lg transition-colors duration-200"
+                    className="cursor-pointer hover:bg-gray-50 p-4 rounded-lg transition-colors duration-200 border border-gray-200"
                   >
                     <div className="flex items-center justify-between">
                       <h3 className="text-xl font-bold text-gray-800 flex items-center">
@@ -1039,33 +1209,70 @@ export default function CampsPage() {
                   
                   {expandedStats && (
                     <div className="mt-4 space-y-4">
-                      {Object.keys(siteStats).sort().map((site) => (
-                        <div key={site} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                          <h4 className="font-bold text-gray-800 mb-2">{site}</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-                            <div>
-                              <span className="text-gray-600">İşçi:</span>
-                              <span className="font-semibold ml-1">{siteStats[site].totalWorkers}</span>
+                      {Object.keys(siteStats).sort().map((site) => {
+                        const stats = siteStats[site];
+                        const hasSharedCamps = camps.some(camp => 
+                          camp.creatorSite === site && camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0
+                        );
+                        
+                        // Sadece ortak kullanımlı şantiyeleri göster
+                        if (!hasSharedCamps) return null;
+                        
+                        return (
+                          <div key={site} className="bg-white/80 backdrop-blur-sm rounded-lg p-4 border border-blue-200 shadow-sm hover:shadow-md transition-shadow">
+                            <h4 className="font-bold text-gray-800 mb-3 flex items-center">
+                              <svg className="w-4 h-4 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                              </svg>
+                              {siteNames[site] || site} Ortak Kullanım
+                              {hasSharedCamps && (
+                                <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                  Ortak Kullanım
+                                </span>
+                              )}
+                            </h4>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-3">
+                              <div className="text-center bg-green-50 rounded-lg p-2 border border-green-200">
+                                <div className="text-lg font-bold text-green-600">{stats.totalWorkers.toLocaleString()}</div>
+                                <div className="text-xs text-green-700 font-medium">İşçi</div>
+                              </div>
+                              <div className="text-center bg-blue-50 rounded-lg p-2 border border-blue-200">
+                                <div className="text-lg font-bold text-blue-600">{stats.totalBeds.toLocaleString()}</div>
+                                <div className="text-xs text-blue-700 font-medium">Yatak</div>
+                              </div>
+                              <div className="text-center bg-yellow-50 rounded-lg p-2 border border-yellow-200">
+                                <div className="text-lg font-bold text-yellow-600">{stats.availableBeds.toLocaleString()}</div>
+                                <div className="text-xs text-yellow-700 font-medium">Boş</div>
+                              </div>
+                              <div className="text-center bg-purple-50 rounded-lg p-2 border border-purple-200">
+                                <div className="text-lg font-bold text-purple-600">%{stats.occupancyRate}</div>
+                                <div className="text-xs text-purple-700 font-medium">Doluluk</div>
+                              </div>
+                              <div className="text-center bg-indigo-50 rounded-lg p-2 border border-indigo-200">
+                                <div className="text-lg font-bold text-indigo-600">{stats.campCount}</div>
+                                <div className="text-xs text-indigo-700 font-medium">Kamp</div>
+                              </div>
                             </div>
-                            <div>
-                              <span className="text-gray-600">Yatak:</span>
-                              <span className="font-semibold ml-1">{siteStats[site].totalBeds}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Boş:</span>
-                              <span className="font-semibold ml-1">{siteStats[site].availableBeds}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Doluluk:</span>
-                              <span className="font-semibold ml-1">%{siteStats[site].occupancyRate}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Kamp:</span>
-                              <span className="font-semibold ml-1">{siteStats[site].campCount}</span>
+                            {/* Progress bar for occupancy */}
+                            <div className="mt-3">
+                              <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                <span>Doluluk Oranı</span>
+                                <span>%{stats.occupancyRate}</span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div 
+                                  className={`h-2 rounded-full transition-all duration-300 ${
+                                    stats.occupancyRate >= 80 ? 'bg-red-500' :
+                                    stats.occupancyRate >= 60 ? 'bg-yellow-500' :
+                                    'bg-green-500'
+                                  }`}
+                                  style={{ width: `${stats.occupancyRate}%` }}
+                                ></div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1495,6 +1702,730 @@ export default function CampsPage() {
                 <button onClick={() => setShowCodeModal(false)} className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">
                   Kapat
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Toplam İşçi Detay Modalı */}
+        {showWorkersModal && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4"
+            onClick={() => setShowWorkersModal(false)}
+          >
+            <div 
+              className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-green-500 to-green-600 p-6 text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <h2 className="text-2xl font-bold">İşçi İstatistikleri</h2>
+                  </div>
+                  <button 
+                    onClick={() => setShowWorkersModal(false)}
+                    className="text-white hover:text-gray-200 transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 overflow-y-auto max-h-[65vh]">
+                {loadingStats || loadingCampDetails || (currentUser?.role === 'santiye_admin' && currentUser?.site && !santiyeAdminWorkersLoaded) ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="w-8 h-8 border-2 border-green-200 border-t-green-600 rounded-full animate-spin mr-3"></div>
+                    <span className="text-gray-600">Veriler yükleniyor...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Genel Özet */}
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold text-green-800 mb-3 flex items-center">
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        Genel Özet
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="text-center bg-white rounded-lg p-3 border border-green-200">
+                          <div className="text-2xl font-bold text-green-600">
+                            {currentUser?.role === 'santiye_admin' && currentUser?.site 
+                              ? (santiyeAdminWorkerCount || 0)
+                              : (overallStats?.totalWorkers || 0)
+                            }
+                          </div>
+                          <div className="text-sm text-green-700">Toplam İşçi</div>
+                        </div>
+                        <div className="text-center bg-white rounded-lg p-3 border border-green-200">
+                          <div className="text-2xl font-bold text-blue-600">{overallStats?.totalCamps || 0}</div>
+                          <div className="text-sm text-blue-700">Toplam Kamp</div>
+                        </div>
+                        <div className="text-center bg-white rounded-lg p-3 border border-green-200">
+                          <div className="text-2xl font-bold text-purple-600">{overallStats?.totalSites || 0}</div>
+                          <div className="text-sm text-purple-700">Toplam Şantiye</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Kamp Bazında İşçi Dağılımı */}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                        <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                        Kamp Bazında İşçi Dağılımı
+                      </h3>
+                      <div className="space-y-4">
+                        {camps.map((camp) => {
+                          const campDetail = campDetails[camp._id];
+                          if (!campDetail) return null;
+                          
+                          const hasSharedSites = camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0;
+                          
+                          return (
+                            <div key={camp._id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                              {/* Ana Kamp Bilgileri */}
+                              <div className="flex items-center justify-between mb-3">
+                                <div>
+                                  <h4 className="font-semibold text-gray-800 text-lg">{camp.name}</h4>
+                                  <p className="text-sm text-gray-600">{camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş'}</p>
+                                  {hasSharedSites && (
+                                    <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                      Ortak Kullanım Aktif
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
+                                    {campDetail.totalWorkers || 0} işçi
+                                  </span>
+                                </div>
+                              </div>
+                              
+                              {/* Genel Kamp İstatistikleri */}
+                              <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-blue-600">{campDetail.totalCapacity || 0}</div>
+                                  <div className="text-xs text-gray-600">Toplam Kapasite</div>
+                                </div>
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-purple-600">%{Math.round(campDetail.occupancyRate || 0)}</div>
+                                  <div className="text-xs text-gray-600">Doluluk Oranı</div>
+                                </div>
+                              </div>
+
+                              {/* Şantiye Bazında Detaylar - Ortak kullanım varsa göster */}
+                              {hasSharedSites && campDetail.siteStats && Object.keys(campDetail.siteStats).length > 0 && (
+                                <div className="mt-4 pt-3 border-t border-gray-200">
+                                  <h5 className="text-sm font-medium text-blue-700 mb-3 flex items-center">
+                                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                                    </svg>
+                                    Şantiye Bazında Dağılım
+                                  </h5>
+                                  <div className="space-y-2">
+                                    {Object.entries(campDetail.siteStats).map(([siteName, stats]: [string, any]) => (
+                                      <div key={siteName} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                        <div className="mb-2">
+                                          <span className="text-sm font-medium text-gray-800">{siteName}</span>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 text-xs">
+                                          <div className="text-center">
+                                            <div className="font-semibold text-green-600">{stats.workers || stats.totalWorkers || 0}</div>
+                                            <div className="text-gray-600">İşçi</div>
+                                          </div>
+                                          <div className="text-center">
+                                            <div className="font-semibold text-blue-600">{stats.capacity || stats.totalBeds || 0}</div>
+                                            <div className="text-gray-600">Kapasite</div>
+                                          </div>
+                                          <div className="text-center">
+                                            <div className="font-semibold text-purple-600">
+                                              %{(stats.capacity || stats.totalBeds) > 0 ? Math.round(((stats.workers || stats.totalWorkers) / (stats.capacity || stats.totalBeds)) * 100) : 0}
+                                            </div>
+                                            <div className="text-gray-600">Doluluk</div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Şantiye Bazlı İstatistikler - Sadece ortak kullanım varsa göster */}
+                    {camps.some(camp => camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) && (
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                          <svg className="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                          </svg>
+                          Şantiye Bazlı İstatistikler (Ortak Kullanım)
+                        </h3>
+                        <div className="space-y-3">
+                          {(() => {
+                            // Tüm kamplardaki tüm şantiyeleri gezip, her şantiye için işçi ve kapasiteyi topla
+                            const siteTotals: Record<string, { workers: number; capacity: number }> = {};
+                            camps.forEach(camp => {
+                              const campDetail = campDetails[camp._id];
+                              if (campDetail && campDetail.siteStats) {
+                                Object.entries(campDetail.siteStats).forEach(([siteName, stats]: [string, any]) => {
+                                  if (!siteTotals[siteName]) {
+                                    siteTotals[siteName] = { workers: 0, capacity: 0 };
+                                  }
+                                  siteTotals[siteName].workers += stats.workers || 0;
+                                  siteTotals[siteName].capacity += stats.capacity || 0;
+                                });
+                              }
+                            });
+                            return Object.entries(siteTotals).map(([siteName, stats]: [string, { workers: number; capacity: number }]) => (
+                              <div key={siteName} className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                                <h4 className="font-semibold text-indigo-800 mb-2">{siteName}</h4>
+                                <div className="grid grid-cols-3 gap-3 text-sm">
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-green-600">{stats.workers}</div>
+                                    <div className="text-xs text-gray-600">İşçi</div>
+                                  </div>
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-blue-600">{stats.capacity}</div>
+                                    <div className="text-xs text-gray-600">Yatak</div>
+                                  </div>
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-purple-600">
+                                      %{stats.capacity > 0 ? Math.round((stats.workers / stats.capacity) * 100) : 0}
+                                    </div>
+                                    <div className="text-xs text-gray-600">Doluluk</div>
+                                  </div>
+                                </div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+                <div className="flex justify-end">
+                  <button 
+                    onClick={() => setShowWorkersModal(false)}
+                    className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
+                  >
+                    Kapat
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Toplam Kapasite Detay Modalı */}
+        {showCapacityModal && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4"
+            onClick={() => setShowCapacityModal(false)}
+          >
+            <div 
+              className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-yellow-500 to-yellow-600 p-6 text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v6H8V5z" />
+                    </svg>
+                    <h2 className="text-2xl font-bold">Kapasite İstatistikleri</h2>
+                  </div>
+                  <button 
+                    onClick={() => setShowCapacityModal(false)}
+                    className="text-white hover:text-gray-200 transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 overflow-y-auto max-h-[65vh]">
+                {loadingStats || loadingCampDetails ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="w-8 h-8 border-2 border-yellow-200 border-t-yellow-600 rounded-full animate-spin mr-3"></div>
+                    <span className="text-gray-600">Veriler yükleniyor...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Genel Özet */}
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold text-yellow-800 mb-3 flex items-center">
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        Genel Özet
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="text-center bg-white rounded-lg p-3 border border-yellow-200">
+                          <div className="text-2xl font-bold text-yellow-600">{overallStats?.totalBeds || 0}</div>
+                          <div className="text-sm text-yellow-700">Toplam Kapasite</div>
+                        </div>
+                        <div className="text-center bg-white rounded-lg p-3 border border-yellow-200">
+                          <div className="text-2xl font-bold text-green-600">{overallStats?.occupiedBeds || 0}</div>
+                          <div className="text-sm text-green-700">Dolu Yatak</div>
+                        </div>
+                        <div className="text-center bg-white rounded-lg p-3 border border-yellow-200">
+                          <div className="text-2xl font-bold text-blue-600">{overallStats?.availableBeds || 0}</div>
+                          <div className="text-sm text-blue-700">Boş Yatak</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Kamp Bazında Kapasite Dağılımı */}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                        <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                        Kamp Bazında Kapasite Dağılımı
+                      </h3>
+                      <div className="space-y-4">
+                        {camps.map((camp) => {
+                          const campDetail = campDetails[camp._id];
+                          if (!campDetail) return null;
+                          
+                          const hasSharedSites = camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0;
+                          
+                          return (
+                            <div key={camp._id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                              {/* Ana Kamp Bilgileri */}
+                              <div className="flex items-center justify-between mb-3">
+                                <div>
+                                  <h4 className="font-semibold text-gray-800 text-lg">{camp.name}</h4>
+                                  <p className="text-sm text-gray-600">{camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş'}</p>
+                                  {hasSharedSites && (
+                                    <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                      Ortak Kullanım Aktif
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-medium">
+                                    {campDetail.totalCapacity || 0} kapasite
+                                  </span>
+                                </div>
+                              </div>
+                              
+                              {/* Genel Kamp İstatistikleri */}
+                              <div className="grid grid-cols-3 gap-3 text-sm mb-3">
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-green-600">{campDetail.totalWorkers || 0}</div>
+                                  <div className="text-xs text-gray-600">Dolu Yatak</div>
+                                </div>
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-blue-600">{campDetail.availableBeds || 0}</div>
+                                  <div className="text-xs text-gray-600">Boş Yatak</div>
+                                </div>
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-purple-600">%{Math.round(campDetail.occupancyRate || 0)}</div>
+                                  <div className="text-xs text-gray-600">Doluluk</div>
+                                </div>
+                              </div>
+
+                              {/* Şantiye Bazında Detaylar - Ortak kullanım varsa göster */}
+                              {hasSharedSites && campDetail.siteStats && Object.keys(campDetail.siteStats).length > 0 && (
+                                <div className="mt-4 pt-3 border-t border-gray-200">
+                                  <h5 className="text-sm font-medium text-blue-700 mb-3 flex items-center">
+                                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                                    </svg>
+                                    Şantiye Bazında Kapasite Dağılımı
+                                  </h5>
+                                  <div className="space-y-2">
+                                    {Object.entries(campDetail.siteStats).map(([siteName, stats]: [string, any]) => {
+                                      const isMainSite = siteName === (camp.creatorSite || camp.site);
+                                      return (
+                                        <div key={siteName} className={`rounded-lg p-3 border ${
+                                          isMainSite ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'
+                                        }`}>
+                                          <div className="flex items-center justify-between mb-2">
+                                            <span className={`text-sm font-medium ${
+                                              isMainSite ? 'text-blue-800' : 'text-green-800'
+                                            }`}>
+                                              {siteName}
+                                            </span>
+                                            <span className={`text-xs px-2 py-1 rounded ${
+                                              isMainSite ? 'bg-blue-200 text-blue-800' : 'bg-green-200 text-green-800'
+                                            }`}>
+                                              {isMainSite ? 'Ana Şantiye' : 'Ortak Kullanım'}
+                                            </span>
+                                          </div>
+                                          <div className="grid grid-cols-3 gap-2 text-xs">
+                                            <div className="text-center">
+                                              <div className="font-semibold text-blue-600">{stats.capacity || 0}</div>
+                                              <div className="text-gray-600">Toplam Kapasite</div>
+                                            </div>
+                                            <div className="text-center">
+                                              <div className="font-semibold text-green-600">{stats.workers || 0}</div>
+                                              <div className="text-gray-600">Dolu Yatak</div>
+                                            </div>
+                                            <div className="text-center">
+                                              <div className="font-semibold text-purple-600">
+                                                %{stats.capacity > 0 ? Math.round((stats.workers / stats.capacity) * 100) : 0}
+                                              </div>
+                                              <div className="text-gray-600">Doluluk</div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Şantiye Bazlı İstatistikler - Sadece ortak kullanım varsa göster */}
+                    {camps.some(camp => camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) && (
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                          <svg className="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                          </svg>
+                          Şantiye Bazlı İstatistikler (Ortak Kullanım)
+                        </h3>
+                        <div className="space-y-3">
+                          {(() => {
+                            // Tüm kamplardaki tüm şantiyeleri gezip, her şantiye için kapasite ve işçi sayısını topla
+                            const siteTotals: Record<string, { workers: number; capacity: number }> = {};
+                            camps.forEach(camp => {
+                              const campDetail = campDetails[camp._id];
+                              if (campDetail && campDetail.siteStats) {
+                                Object.entries(campDetail.siteStats).forEach(([siteName, stats]: [string, any]) => {
+                                  if (!siteTotals[siteName]) {
+                                    siteTotals[siteName] = { workers: 0, capacity: 0 };
+                                  }
+                                  siteTotals[siteName].workers += stats.workers || 0;
+                                  siteTotals[siteName].capacity += stats.capacity || 0;
+                                });
+                              }
+                            });
+                            return Object.entries(siteTotals).map(([siteName, stats]: [string, { workers: number; capacity: number }]) => (
+                              <div key={siteName} className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                                <h4 className="font-semibold text-indigo-800 mb-2">{siteName}</h4>
+                                <div className="grid grid-cols-3 gap-3 text-sm">
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-green-600">{stats.workers}</div>
+                                    <div className="text-xs text-gray-600">İşçi</div>
+                                  </div>
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-blue-600">{stats.capacity}</div>
+                                    <div className="text-xs text-gray-600">Yatak</div>
+                                  </div>
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-purple-600">
+                                      %{stats.capacity > 0 ? Math.round((stats.workers / stats.capacity) * 100) : 0}
+                                    </div>
+                                    <div className="text-xs text-gray-600">Doluluk</div>
+                                  </div>
+                                </div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+                <div className="flex justify-end">
+                  <button 
+                    onClick={() => setShowCapacityModal(false)}
+                    className="px-6 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-medium"
+                  >
+                    Kapat
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Doluluk Oranı Detay Modalı */}
+        {showOccupancyModal && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4"
+            onClick={() => setShowOccupancyModal(false)}
+          >
+            <div 
+              className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-purple-500 to-purple-600 p-6 text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    <h2 className="text-2xl font-bold">Doluluk Oranı İstatistikleri</h2>
+                  </div>
+                  <button 
+                    onClick={() => setShowOccupancyModal(false)}
+                    className="text-white hover:text-gray-200 transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 overflow-y-auto max-h-[65vh]">
+                {loadingStats || loadingCampDetails ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="w-8 h-8 border-2 border-purple-200 border-t-purple-600 rounded-full animate-spin mr-3"></div>
+                    <span className="text-gray-600">Veriler yükleniyor...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Genel Özet */}
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold text-purple-800 mb-3 flex items-center">
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        Genel Özet
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="text-center bg-white rounded-lg p-3 border border-purple-200">
+                          <div className="text-2xl font-bold text-purple-600">%{overallStats?.occupancyRate || 0}</div>
+                          <div className="text-sm text-purple-700">Genel Doluluk</div>
+                        </div>
+                        <div className="text-center bg-white rounded-lg p-3 border border-purple-200">
+                          <div className="text-2xl font-bold text-green-600">{overallStats?.occupiedBeds || 0}</div>
+                          <div className="text-sm text-green-700">Dolu Yatak</div>
+                        </div>
+                        <div className="text-center bg-white rounded-lg p-3 border border-purple-200">
+                          <div className="text-2xl font-bold text-blue-600">{overallStats?.availableBeds || 0}</div>
+                          <div className="text-sm text-blue-700">Boş Yatak</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Kamp Bazında Doluluk Oranları */}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                        <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                        Kamp Bazında Doluluk Oranları
+                      </h3>
+                      <div className="space-y-4">
+                        {camps.map((camp) => {
+                          const campDetail = campDetails[camp._id];
+                          if (!campDetail) return null;
+                          
+                          const occupancyRate = Math.round(campDetail.occupancyRate || 0);
+                          const hasSharedSites = camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0;
+                          
+                          return (
+                            <div key={camp._id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                              {/* Ana Kamp Bilgileri */}
+                              <div className="flex items-center justify-between mb-3">
+                                <div>
+                                  <h4 className="font-semibold text-gray-800 text-lg">{camp.name}</h4>
+                                  <p className="text-sm text-gray-600">{camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş'}</p>
+                                  {hasSharedSites && (
+                                    <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                      Ortak Kullanım Aktif
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                                    occupancyRate >= 80 ? 'bg-red-100 text-red-800' :
+                                    occupancyRate >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                                    'bg-green-100 text-green-800'
+                                  }`}>
+                                    %{occupancyRate} doluluk
+                                  </span>
+                                </div>
+                              </div>
+                              
+                              {/* Genel Kamp İstatistikleri */}
+                              <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-blue-600">{campDetail.totalCapacity || 0}</div>
+                                  <div className="text-xs text-gray-600">Toplam Kapasite</div>
+                                </div>
+                                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                                  <div className="text-lg font-bold text-green-600">{campDetail.totalWorkers || 0}</div>
+                                  <div className="text-xs text-gray-600">Dolu Yatak</div>
+                                </div>
+                              </div>
+
+                              {/* Progress Bar */}
+                              <div className="mt-3 mb-3">
+                                <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                  <span>Doluluk Oranı</span>
+                                  <span>%{occupancyRate}</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                  <div 
+                                    className={`h-2 rounded-full transition-all duration-300 ${
+                                      occupancyRate >= 80 ? 'bg-red-500' :
+                                      occupancyRate >= 60 ? 'bg-yellow-500' :
+                                      'bg-green-500'
+                                    }`}
+                                    style={{ width: `${occupancyRate}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+
+                              {/* Şantiye Bazında Detaylar - Ortak kullanım varsa göster */}
+                              {hasSharedSites && campDetail.siteStats && Object.keys(campDetail.siteStats).length > 0 && (
+                                <div className="mt-4 pt-3 border-t border-gray-200">
+                                  <h5 className="text-sm font-medium text-blue-700 mb-3 flex items-center">
+                                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                                    </svg>
+                                    Şantiye Bazında Doluluk Oranları
+                                  </h5>
+                                  <div className="space-y-2">
+                                    {Object.entries(campDetail.siteStats).map(([siteName, stats]: [string, any]) => {
+                                      const isMainSite = siteName === (camp.creatorSite || camp.site);
+                                      const siteOccupancy = Math.round((stats.workers / stats.capacity) * 100) || 0;
+                                      return (
+                                        <div key={siteName} className={`rounded-lg p-3 border ${
+                                          isMainSite ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'
+                                        }`}>
+                                          <div className="flex items-center justify-between mb-2">
+                                            <span className={`text-sm font-medium ${
+                                              isMainSite ? 'text-blue-800' : 'text-green-800'
+                                            }`}>
+                                              {siteName}
+                                            </span>
+                                            <span className={`text-xs px-2 py-1 rounded ${
+                                              isMainSite ? 'bg-blue-200 text-blue-800' : 'bg-green-200 text-green-800'
+                                            }`}>
+                                              {isMainSite ? 'Ana Şantiye' : 'Ortak Kullanım'}
+                                            </span>
+                                          </div>
+                                          <div className="grid grid-cols-3 gap-2 text-xs mb-2">
+                                            <div className="text-center">
+                                              <div className="font-semibold text-blue-600">{stats.capacity || 0}</div>
+                                              <div className="text-gray-600">Kapasite</div>
+                                            </div>
+                                            <div className="text-center">
+                                              <div className="font-semibold text-green-600">{stats.workers || 0}</div>
+                                              <div className="text-gray-600">İşçi</div>
+                                            </div>
+                                            <div className="text-center">
+                                              <div className="font-semibold text-purple-600">%{siteOccupancy}</div>
+                                              <div className="text-gray-600">Doluluk</div>
+                                            </div>
+                                          </div>
+                                          {/* Şantiye Progress Bar */}
+                                          <div className="mt-2">
+                                            <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                              <span>Doluluk</span>
+                                              <span>%{siteOccupancy}</span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                              <div 
+                                                className={`h-1.5 rounded-full transition-all duration-300 ${
+                                                  siteOccupancy >= 80 ? 'bg-red-500' :
+                                                  siteOccupancy >= 60 ? 'bg-yellow-500' :
+                                                  'bg-green-500'
+                                                }`}
+                                                style={{ width: `${siteOccupancy}%` }}
+                                              ></div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Şantiye Bazlı İstatistikler - Sadece ortak kullanım varsa göster */}
+                    {camps.some(camp => camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) && (
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                          <svg className="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                          </svg>
+                          Şantiye Bazlı İstatistikler (Ortak Kullanım)
+                        </h3>
+                        <div className="space-y-3">
+                          {Object.entries(siteStats).sort().map(([siteName, stats]) => {
+                            const hasSharedCamps = camps.some(camp => 
+                              camp.creatorSite === siteName && camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0
+                            );
+                            
+                            if (!hasSharedCamps) return null;
+                            
+                            return (
+                              <div key={siteName} className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                                <h4 className="font-semibold text-indigo-800 mb-2">{siteName}</h4>
+                                <div className="grid grid-cols-3 gap-3 text-sm">
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-green-600">{stats.totalWorkers}</div>
+                                    <div className="text-xs text-gray-600">İşçi</div>
+                                  </div>
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-blue-600">{stats.totalBeds}</div>
+                                    <div className="text-xs text-gray-600">Yatak</div>
+                                  </div>
+                                  <div className="text-center bg-white rounded-lg p-2 border border-indigo-200">
+                                    <div className="text-lg font-bold text-purple-600">%{stats.occupancyRate}</div>
+                                    <div className="text-xs text-gray-600">Doluluk</div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+                <div className="flex justify-end">
+                  <button 
+                    onClick={() => setShowOccupancyModal(false)}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+                  >
+                    Kapat
+                  </button>
+                </div>
               </div>
             </div>
           </div>

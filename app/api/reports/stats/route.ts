@@ -109,11 +109,18 @@ export async function GET(request: Request) {
 
     // Proje bazlı istatistikleri hesapla
     result.projectStats.forEach((room: any) => {
+      // Kapasite: Oda hangi şantiyeye aitse o şantiyeye yazılır
       if (siteStats[room.project]) {
         siteStats[room.project].rooms += 1;
         siteStats[room.project].capacity += room.capacity;
-        siteStats[room.project].workers += room.occupancy;
       }
+      
+      // İşçi sayısı: İşçinin project alanına bakarak hangi şantiyeden geldiğini belirle
+      room.workers.forEach((worker: any) => {
+        if (siteStats[worker.project]) {
+          siteStats[worker.project].workers += 1;
+        }
+      });
     });
 
     // Doluluk oranlarını hesapla
@@ -147,17 +154,18 @@ export async function GET(request: Request) {
 
     // Her oda için işçileri analiz et
     result.projectStats.forEach((room: any) => {
-      if (crossProjectStats[room.project]) {
-        // Bu odadaki işçileri analiz et
-        room.workers.forEach((worker: any) => {
-          crossProjectStats[room.project].totalWorkers++;
+      // Bu odadaki işçileri analiz et
+      room.workers.forEach((worker: any) => {
+        // İşçinin kendi şantiyesindeki istatistikleri
+        if (crossProjectStats[worker.project]) {
+          crossProjectStats[worker.project].totalWorkers++;
           if (worker.project === room.project) {
-            crossProjectStats[room.project].sameProjectWorkers++;
+            crossProjectStats[worker.project].sameProjectWorkers++;
           } else {
-            crossProjectStats[room.project].otherProjectWorkers++;
+            crossProjectStats[worker.project].otherProjectWorkers++;
           }
-        });
-      }
+        }
+      });
     });
 
     return NextResponse.json({
