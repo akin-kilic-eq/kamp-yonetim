@@ -132,7 +132,20 @@ export default function CampsPage() {
           if (cacheAge <= maxCacheAge && userRole === user.role) {
             // Cache geçerli, verileri göster
             setCamps(data);
-            setUserPermissions(permissions);
+            
+            // Admin roller için otomatik yetkiler
+            let finalPermissions = permissions;
+            if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+              finalPermissions = {
+                siteAccessApproved: true,
+                sitePermissions: {
+                  canViewCamps: true,
+                  canEditCamps: true,
+                  canCreateCamps: true
+                }
+              };
+            }
+            setUserPermissions(finalPermissions);
             setLastCacheTime(timestamp);
             setIsLoading(false);
             
@@ -146,7 +159,20 @@ export default function CampsPage() {
           } else {
             // Cache eski ama verileri göster, arka planda yenile
             setCamps(data);
-            setUserPermissions(permissions);
+            
+            // Admin roller için otomatik yetkiler
+            let finalPermissions = permissions;
+            if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+              finalPermissions = {
+                siteAccessApproved: true,
+                sitePermissions: {
+                  canViewCamps: true,
+                  canEditCamps: true,
+                  canCreateCamps: true
+                }
+              };
+            }
+            setUserPermissions(finalPermissions);
             setLastCacheTime(timestamp);
             setIsLoading(false);
             
@@ -257,28 +283,72 @@ export default function CampsPage() {
       }
       setCamps(response);
       
-      // Cache'e kaydet
-      // Admin roller için otomatik yetkiler
-      let permissionsToCache = userPermissions;
-      if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
-        permissionsToCache = {
-          siteAccessApproved: true,
-          sitePermissions: {
-            canViewCamps: true,
-            canEditCamps: true,
-            canCreateCamps: true
+      // Kullanıcı yetkilerini API'den al ve güncelle
+      try {
+        const userResponse = await fetch('/api/users');
+        const users = await userResponse.json();
+        const currentUserData = users.find((u: any) => u.email === email);
+        
+        if (currentUserData) {
+          // Admin roller için otomatik yetkiler
+          let permissionsToCache;
+          if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+            permissionsToCache = {
+              siteAccessApproved: true,
+              sitePermissions: {
+                canViewCamps: true,
+                canEditCamps: true,
+                canCreateCamps: true
+              }
+            };
+          } else {
+            // User rolü için API'den gelen yetkileri kullan
+            permissionsToCache = {
+              siteAccessApproved: currentUserData.siteAccessApproved || false,
+              sitePermissions: {
+                canViewCamps: currentUserData.sitePermissions?.canViewCamps || false,
+                canEditCamps: currentUserData.sitePermissions?.canEditCamps || false,
+                canCreateCamps: currentUserData.sitePermissions?.canCreateCamps || false
+              }
+            };
           }
+          
+          // State'i güncelle
+          setUserPermissions(permissionsToCache);
+          
+          const cacheDataToSave = {
+            data: response,
+            timestamp: Date.now(),
+            userRole: user.role,
+            permissions: permissionsToCache
+          };
+          sessionStorage.setItem(`campsCache_${email}`, JSON.stringify(cacheDataToSave));
+          setLastCacheTime(Date.now());
+        }
+      } catch (userError) {
+        console.error('Kullanıcı yetkileri alınırken hata:', userError);
+        // Hata durumunda mevcut yetkileri kullan
+        let permissionsToCache = userPermissions;
+        if (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin') {
+          permissionsToCache = {
+            siteAccessApproved: true,
+            sitePermissions: {
+              canViewCamps: true,
+              canEditCamps: true,
+              canCreateCamps: true
+            }
+          };
+        }
+        
+        const cacheDataToSave = {
+          data: response,
+          timestamp: Date.now(),
+          userRole: user.role,
+          permissions: permissionsToCache
         };
+        sessionStorage.setItem(`campsCache_${email}`, JSON.stringify(cacheDataToSave));
+        setLastCacheTime(Date.now());
       }
-      
-      const cacheDataToSave = {
-        data: response,
-        timestamp: Date.now(),
-        userRole: user.role,
-        permissions: permissionsToCache
-      };
-      sessionStorage.setItem(`campsCache_${email}`, JSON.stringify(cacheDataToSave));
-      setLastCacheTime(Date.now());
       
       // Admin kullanıcılar için istatistikleri hemen yükle (sadece ilk yüklemede)
       if (!isBackgroundRefresh && (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin')) {
@@ -763,19 +833,21 @@ export default function CampsPage() {
   };
 
   // Kullanıcı erişim ve yetki kontrolü
-  const hasAccess =
+  const hasAccess = !!(
     currentUser?.role === 'kurucu_admin' ||
     currentUser?.role === 'merkez_admin' ||
     currentUser?.role === 'santiye_admin' ||
-    (userPermissions?.siteAccessApproved && userPermissions?.sitePermissions?.canViewCamps);
+    (userPermissions?.siteAccessApproved && userPermissions?.sitePermissions?.canViewCamps)
+  );
 
   // Cache'den yüklenen veriler varsa erişim kontrolünü geçici olarak true yap
   const hasCachedData = lastCacheTime > 0 && camps.length > 0;
-  const canCreate =
+  const canCreate = !!(
     currentUser?.role === 'kurucu_admin' ||
     currentUser?.role === 'merkez_admin' ||
     currentUser?.role === 'santiye_admin' ||
-    userPermissions?.sitePermissions?.canCreateCamps;
+    userPermissions?.sitePermissions?.canCreateCamps
+  );
 
   // Admin kullanıcılar için şantiye bazında gruplandırma
   const groupedCamps = isAdminUser ? camps.reduce((groups, camp) => {
@@ -1100,7 +1172,17 @@ export default function CampsPage() {
               )}
             </div>
             <div className="flex space-x-4">
-              {hasAccess && (!isAdminUser || currentUser?.role === 'kurucu_admin') && (
+              {/* Debug bilgisi - sadece geliştirme sırasında */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="text-xs text-gray-500 bg-gray-100 p-2 rounded">
+                  Debug: hasAccess={hasAccess?.toString() || 'false'}, canCreate={canCreate?.toString() || 'false'}, 
+                  siteAccessApproved={userPermissions?.siteAccessApproved?.toString() || 'false'}, 
+                  canViewCamps={userPermissions?.sitePermissions?.canViewCamps?.toString() || 'false'}, 
+                  canCreateCamps={userPermissions?.sitePermissions?.canCreateCamps?.toString() || 'false'}
+                </div>
+              )}
+              
+              {hasAccess && (
                 <>
                   <button
                     onClick={() => setShowJoinModal(true)}
