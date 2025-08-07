@@ -269,6 +269,12 @@ export default function CampsPage() {
       const user = JSON.parse(userStr);
       setCurrentUser(user);
       
+      // Personel kullanıcıları için personel sayfasına yönlendir
+      if (user.role === 'personel_admin' || user.role === 'personel_user') {
+        router.push('/personnel');
+        return;
+      }
+      
       // Session storage'dan gelen kullanıcı yetkilerini doğrudan kullan
       if (user.role === 'user') {
         const userPermissionsFromSession = {

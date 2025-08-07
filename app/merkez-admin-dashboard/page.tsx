@@ -31,7 +31,7 @@ export default function MerkezAdminDashboard() {
       className="min-h-screen flex items-center justify-center bg-cover bg-center bg-fixed"
       style={{ backgroundImage: "url('/arka-plan-guncel-2.jpg')" }}
     >
-      <div className="max-w-3xl w-full space-y-8 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-8 relative">
+      <div className="max-w-6xl w-full space-y-8 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg p-8 relative">
         {/* Çıkış Yap Butonu */}
         <button
           onClick={handleLogout}
@@ -41,8 +41,8 @@ export default function MerkezAdminDashboard() {
         </button>
         
         <h1 className="text-3xl font-bold mb-6 text-center">Merkez Admin Dashboard</h1>
-        <div className="mb-8 text-center text-lg">Hoş geldin, merkez admin! Buradan kullanıcıları yönetebilir ve kampları görüntüleyebilirsin.</div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="mb-8 text-center text-lg">Hoş geldin, merkez admin! Buradan kullanıcıları yönetebilir, kampları görüntüleyebilir ve personel verilerini inceleyebilirsin.</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="bg-blue-100 rounded-lg p-6 text-center flex flex-col h-full">
             <div className="text-xl font-semibold mb-2">Kullanıcı Yönetimi</div>
             <div className="mb-4 flex-grow">Kullanıcıları görüntüle, onayla ve rol ata.</div>
@@ -61,6 +61,16 @@ export default function MerkezAdminDashboard() {
               className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded mt-auto"
             >
               Tüm Kampları Gör
+            </button>
+          </div>
+          <div className="bg-orange-100 rounded-lg p-6 text-center flex flex-col h-full">
+            <div className="text-xl font-semibold mb-2">Personel Yönetimi</div>
+            <div className="mb-4 flex-grow">Tüm şantiyelerin personel özetlerini görüntüle.</div>
+            <button 
+              onClick={() => router.push('/admin/personnel')} 
+              className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded mt-auto"
+            >
+              Personel Paneline Git
             </button>
           </div>
           <div className="bg-purple-100 rounded-lg p-6 text-center flex flex-col h-full">

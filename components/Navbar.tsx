@@ -46,6 +46,31 @@ export default function Navbar() {
     }
   };
 
+  // Personel yönetimi kullanıcıları için özel menü
+  if (currentUser && (currentUser.role === 'personel_admin' || currentUser.role === 'personel_user')) {
+    return (
+      <nav className="bg-green-800 text-white px-6 py-3 flex justify-between items-center">
+        <div className="font-bold text-xl">Personel Yönetimi Paneli</div>
+        <div className="flex gap-6 items-center">
+          <a href="/personnel" className="hover:underline">Personel Listesi</a>
+          <a href="/personnel/reports" className="hover:underline">Personel Raporu</a>
+          {currentUser.role === 'personel_admin' && (
+            <a href="/personnel/settings" className="hover:underline">Ayarlar</a>
+          )}
+          <button
+            onClick={() => {
+              sessionStorage.removeItem('currentUser');
+              router.push('/login');
+            }}
+            className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-white ml-4"
+          >
+            Çıkış
+          </button>
+        </div>
+      </nav>
+    );
+  }
+
   // Admin kullanıcıları için özel menü
   if (currentUser && (currentUser.role === 'kurucu_admin' || currentUser.role === 'merkez_admin')) {
     const isKurucu = currentUser.role === 'kurucu_admin';
@@ -59,6 +84,7 @@ export default function Navbar() {
           </a>
           <a href="/admin/settings" className="hover:underline">Panel Ayarları</a>
           <a href="/camps" className="hover:underline">Tüm Kamplar</a>
+          <a href="/admin/personnel" className="hover:underline">Personel Yönetimi</a>
           <button
             onClick={() => {
               // Tüm kamp cache'lerini temizle

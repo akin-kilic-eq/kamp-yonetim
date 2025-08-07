@@ -59,6 +59,10 @@ export default function LoginPage() {
         case 'merkez_admin':
           router.push('/merkez-admin-dashboard');
           break;
+        case 'personel_admin':
+        case 'personel_user':
+          router.push('/personnel');
+          break;
         case 'santiye_admin':
         case 'user':
         default:

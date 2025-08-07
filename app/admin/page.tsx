@@ -328,6 +328,8 @@ export default function AdminPanel() {
                         <option value="user">User</option>
                         <option value="santiye_admin">Şantiye Admini</option>
                         <option value="merkez_admin">Merkez Admin</option>
+                        <option value="personel_admin">Personel Admin</option>
+                        <option value="personel_user">Personel User</option>
                         <option value="kurucu_admin">Kurucu Admin</option>
                       </select>
                     </td>
@@ -371,6 +373,8 @@ export default function AdminPanel() {
                 <option value="user">User</option>
                 <option value="santiye_admin">Şantiye Admini</option>
                 <option value="merkez_admin">Merkez Admin</option>
+                <option value="personel_admin">Personel Admin</option>
+                <option value="personel_user">Personel User</option>
                 <option value="kurucu_admin">Kurucu Admin</option>
               </select>
               <div className="flex justify-end gap-2 mt-4">

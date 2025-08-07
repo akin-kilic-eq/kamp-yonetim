@@ -199,6 +199,8 @@ export default function MerkezAdminPanel() {
                       >
                         <option value="user">User</option>
                         <option value="santiye_admin">Şantiye Admini</option>
+                        <option value="personel_admin">Personel Admin</option>
+                        <option value="personel_user">Personel User</option>
                       </select>
                     </td>
                     <td className="border px-6 py-3 whitespace-nowrap text-center">{u.site}</td>
@@ -263,8 +265,8 @@ export default function MerkezAdminPanel() {
               <select required className="w-full border rounded px-3 py-2" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                 <option value="user">User</option>
                 <option value="santiye_admin">Şantiye Admini</option>
-                <option value="merkez_admin">Merkez Admin</option>
-                <option value="kurucu_admin">Kurucu Admin</option>
+                <option value="personel_admin">Personel Admin</option>
+                <option value="personel_user">Personel User</option>
               </select>
               <div className="flex justify-end gap-2 mt-4">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 rounded bg-gray-300">İptal</button>
