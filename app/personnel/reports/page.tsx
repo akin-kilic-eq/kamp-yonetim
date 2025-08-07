@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { BarChart3, Users, Building, Globe, TrendingUp, FileText } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 
@@ -46,7 +46,7 @@ interface GeneralStats {
   companiesCount: number;
 }
 
-export default function PersonnelReportsPage() {
+function PersonnelReportsContent() {
   const [personnel, setPersonnel] = useState<Personnel[]>([]);
   const [loading, setLoading] = useState(true);
   const [userSite, setUserSite] = useState<string>('');
@@ -418,5 +418,23 @@ export default function PersonnelReportsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PersonnelReportsPage() {
+  return (
+    <Suspense fallback={
+      <div 
+        className="min-h-screen bg-cover bg-center bg-fixed flex items-center justify-center"
+        style={{ backgroundImage: "url('/arkaplan.jpg')" }}
+      >
+        <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-8">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600 text-center">Rapor yükleniyor...</p>
+        </div>
+      </div>
+    }>
+      <PersonnelReportsContent />
+    </Suspense>
   );
 }
