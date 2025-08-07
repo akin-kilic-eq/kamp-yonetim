@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     await connectDB();
     const { name, description } = await request.json();
 
-    console.log('POST /api/sites - Gelen veri:', { name, description });
+
 
     // Yetki kontrolü - sadece kurucu_admin ve merkez_admin
     const userStr = request.headers.get('user');

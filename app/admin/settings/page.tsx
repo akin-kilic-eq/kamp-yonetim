@@ -67,9 +67,9 @@ export default function AdminSettingsPage() {
         body: JSON.stringify(formData)
       });
       
-      console.log('API yanıtı:', res.status);
+  
       const data = await res.json();
-      console.log('API verisi:', data);
+  
       
       if (data.error) setError(data.error);
       else {

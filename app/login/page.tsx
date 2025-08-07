@@ -25,7 +25,7 @@ export default function LoginPage() {
     try {
       const response = await login(formData.email, formData.password);
       
-      console.log('Login API yanıtı:', response);
+  
       
       if (response.error) {
         setError(response.error);

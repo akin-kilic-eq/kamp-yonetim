@@ -38,7 +38,7 @@ export async function PUT(
     await connectDB();
     
     const body = await request.json();
-    console.log('API Debug - Update Request Body:', body);
+
     
     const {
       firstName,
@@ -89,7 +89,7 @@ export async function PUT(
     if (company) updateData.company = company;
     if (status) updateData.status = status;
     
-    console.log('API Debug - Update Data:', updateData);
+
     
     const updatedPersonnel = await Personnel.findByIdAndUpdate(
       id,
@@ -97,7 +97,7 @@ export async function PUT(
       { new: true, runValidators: true }
     ).populate('createdBy', 'email');
     
-    console.log('API Debug - Updated Personnel:', updatedPersonnel);
+
     
     if (!updatedPersonnel) {
       return NextResponse.json({ error: 'Personel güncellenirken hata oluştu' }, { status: 500 });

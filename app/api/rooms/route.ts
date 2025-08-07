@@ -60,7 +60,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const campId = searchParams.get('campId');
-    console.log('API/ROOMS campId:', campId);
+
 
     await connectDB();
 

@@ -42,7 +42,7 @@ class Cache {
       if (navigationEntry && navigationEntry.type === 'reload') {
         this.isPageRefreshed = true;
         this.clear();
-        console.log('Navigation API ile sayfa yenileme tespit edildi');
+    
       }
     }
   }

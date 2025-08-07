@@ -49,11 +49,11 @@ export default function AdminCampsPage() {
       console.log('User email:', user.email);
       
       const apiUrl = `/api/camps?userEmail=${user.email}&role=${user.role}`;
-      console.log('Full API URL:', apiUrl);
+  
       
       const res = await fetch(apiUrl);
       const data = await res.json();
-      console.log('API Response:', data);
+  
       if (data.error) setError(data.error);
       else setCamps(data);
     } catch (err) {

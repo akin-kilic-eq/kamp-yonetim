@@ -60,7 +60,8 @@ export default function PersonnelReportsPage() {
   });
   const [countrySummary, setCountrySummary] = useState<CountrySummary[]>([]);
   const [companySummary, setCompanySummary] = useState<CompanySummary[]>([]);
-  const searchParams = useSearchParams();
+  const [searchParams, setSearchParams] = useState<URLSearchParams | null>(null);
+  const searchParamsHook = useSearchParams();
 
   const fetchPersonnel = async () => {
     try {
@@ -68,20 +69,22 @@ export default function PersonnelReportsPage() {
       const params = new URLSearchParams();
       
       // URL'den site parametresini al
-      const siteParam = searchParams.get('site');
+      const siteParam = searchParams?.get('site');
       
       if (siteParam) {
         // Admin'den gelen site parametresi
         params.append('site', siteParam);
         setUserSite(siteParam);
       } else {
-        // Normal kullanıcının şantiye bilgisini al
-        const userStr = sessionStorage.getItem('currentUser');
-        if (userStr) {
-          const user = JSON.parse(userStr);
-          if (user.site) {
-            params.append('site', user.site);
-            setUserSite(user.site);
+        // Normal kullanıcının şantiye bilgisini al (sadece client-side'da)
+        if (typeof window !== 'undefined') {
+          const userStr = sessionStorage.getItem('currentUser');
+          if (userStr) {
+            const user = JSON.parse(userStr);
+            if (user.site) {
+              params.append('site', user.site);
+              setUserSite(user.site);
+            }
           }
         }
       }
@@ -169,15 +172,26 @@ export default function PersonnelReportsPage() {
   };
 
   useEffect(() => {
-    // Kullanıcının şantiye bilgisini al
-    const userStr = sessionStorage.getItem('currentUser');
-    if (userStr) {
-      const user = JSON.parse(userStr);
-      setUserSite(user.site || '');
+    // searchParams'ı client-side'da set et
+    if (typeof window !== 'undefined') {
+      setSearchParams(searchParamsHook);
     }
     
-    fetchPersonnel();
-  }, []);
+    // Kullanıcının şantiye bilgisini al (sadece client-side'da)
+    if (typeof window !== 'undefined') {
+      const userStr = sessionStorage.getItem('currentUser');
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        setUserSite(user.site || '');
+      }
+    }
+  }, [searchParamsHook]);
+
+  useEffect(() => {
+    if (searchParams) {
+      fetchPersonnel();
+    }
+  }, [searchParams]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -188,7 +202,8 @@ export default function PersonnelReportsPage() {
     }
   };
 
-  if (loading) {
+  // Server-side rendering sırasında loading göster
+  if (typeof window === 'undefined' || loading) {
     return (
       <div 
         className="min-h-screen bg-cover bg-center bg-fixed flex items-center justify-center"

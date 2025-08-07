@@ -201,7 +201,7 @@ export default function ReportPage() {
       setLoading(true);
       // Optimize edilmiş istatistik API'sini kullan
       const statsData = await getCampStats(campId);
-      console.log('API\'den gelen stats verileri:', statsData);
+  
       if (statsData.error) {
         console.error('Stats API error:', statsData.error);
         return;

@@ -69,23 +69,64 @@ export default function RoomsPage() {
     { company: 'Slava', project: '2-3', label: 'Slava 2-3' }
   ]);
 
+  // Personel verileri için state
+  const [personnelData, setPersonnelData] = useState<any[]>([]);
+  const [personnelLoading, setPersonnelLoading] = useState(false);
+  const [showPersonnelDropdown, setShowPersonnelDropdown] = useState(false);
+
+  // Personel verilerini getir
+  const fetchPersonnelData = async (camp: Camp) => {
+    try {
+      setPersonnelLoading(true);
+      
+      if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
+        // Ortak kullanım açıksa, paylaşılan şantiyeler + kampın kendi şantiyesi
+        const sitesResponse = await fetch('/api/sites');
+        const sites = await sitesResponse.json();
+        
+        const availableSites = sites.filter((site: any) => 
+          site.name === camp.site || camp.sharedWithSites!.includes(site._id)
+        );
+        
+        // Her şantiye için personel verilerini getir
+        const allPersonnel: any[] = [];
+        for (const site of availableSites) {
+          const response = await fetch(`/api/personnel?site=${encodeURIComponent(site.name)}`);
+          if (response.ok) {
+            const sitePersonnel = await response.json();
+            allPersonnel.push(...sitePersonnel);
+          }
+        }
+        setPersonnelData(allPersonnel);
+      } else {
+        // Ortak kullanım kapalıysa, sadece kampın kendi şantiyesi
+        if (camp.site) {
+          const response = await fetch(`/api/personnel?site=${encodeURIComponent(camp.site)}`);
+          if (response.ok) {
+            const sitePersonnel = await response.json();
+            setPersonnelData(sitePersonnel);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Personel verileri getirilirken hata:', error);
+    } finally {
+      setPersonnelLoading(false);
+    }
+  };
+
   // Kamp ortak kullanım ayarlarına göre şantiye seçeneklerini güncelle
   const updateProjectOptions = async (camp: Camp) => {
     try {
-      console.log('updateProjectOptions çağrıldı:', camp);
-      
       // Tüm şantiyeleri getir
       const sitesResponse = await fetch('/api/sites');
       const sites = await sitesResponse.json();
-      console.log('Tüm şantiyeler:', sites);
       
       if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
-        console.log('Ortak kullanım açık, paylaşılan şantiyeler:', camp.sharedWithSites);
         // Ortak kullanım açıksa, paylaşılan şantiyeler + kampın kendi şantiyesi
         const availableSites = sites.filter((site: any) => 
           site.name === camp.site || camp.sharedWithSites!.includes(site._id)
         );
-        console.log('Kullanılabilir şantiyeler:', availableSites);
         
         const options = availableSites.map((site: any) => ({
           company: site.name,
@@ -93,20 +134,16 @@ export default function RoomsPage() {
           label: site.name
         }));
         
-        console.log('Oluşturulan seçenekler:', options);
         setProjectOptions(options);
       } else {
-        console.log('Ortak kullanım kapalı, kamp şantiyesi:', camp.site);
         // Ortak kullanım kapalıysa, sadece kampın kendi şantiyesi
         const campSite = sites.find((site: any) => site.name === camp.site);
-        console.log('Bulunan kamp şantiyesi:', campSite);
         if (campSite) {
           const options = [{
             company: campSite.name,
             project: campSite.name,
             label: campSite.name
           }];
-          console.log('Ortak kullanım kapalı seçenekleri:', options);
           setProjectOptions(options);
         }
       }
@@ -133,6 +170,9 @@ export default function RoomsPage() {
 
       // Kamp ortak kullanım ayarlarına göre şantiye seçeneklerini güncelle
       updateProjectOptions(camp);
+
+      // Personel verilerini getir
+      fetchPersonnelData(camp);
 
       // Yetki kontrolü
       const isOwner = camp.userEmail === user.email;
@@ -171,6 +211,20 @@ export default function RoomsPage() {
     window.addEventListener('refreshRooms', handler);
     return () => window.removeEventListener('refreshRooms', handler);
   }, [currentCamp]);
+
+  // Personel seçildiğinde bilgileri otomatik doldur
+  const handlePersonnelSelect = (employeeId: string) => {
+    const selectedPersonnel = personnelData.find(p => p.employeeId === employeeId);
+    if (selectedPersonnel) {
+      setNewWorker({
+        ...newWorker,
+        name: selectedPersonnel.firstName,
+        surname: selectedPersonnel.lastName,
+        registrationNumber: selectedPersonnel.employeeId,
+        project: selectedPersonnel.site
+      });
+    }
+  };
 
   const loadRooms = async (campId: string, forceRefresh: boolean = false) => {
     try {
@@ -522,7 +576,7 @@ const openAddWorkerModal = (room: Room) => {
     if (!window.confirm('Bu işçiyi silmek istediğinizden emin misiniz?')) return;
     try {
       const res = await deleteWorker(workerId, currentUserEmail, currentCamp._id);
-      console.log('Silme API yanıtı:', res);
+  
       if (!res.error) {
         // Tüm odaları ve işçileri yeniden yükle
         loadRooms(currentCamp._id, true);
@@ -938,13 +992,65 @@ const openAddWorkerModal = (room: Room) => {
               </div>
               <div className="mb-4">
                 <label htmlFor="worker-registration" className="block text-sm font-medium text-gray-700">Sicil No</label>
-                <input
-                  type="text"
-                  id="worker-registration"
-                  value={newWorker.registrationNumber}
-                  onChange={(e) => setNewWorker({ ...newWorker, registrationNumber: e.target.value })}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
+                {personnelLoading ? (
+                  <div className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500">
+                    Personel listesi yükleniyor...
+                  </div>
+                ) : personnelData.length > 0 ? (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      id="worker-registration"
+                      value={newWorker.registrationNumber}
+                      onChange={(e) => {
+                        setNewWorker({ ...newWorker, registrationNumber: e.target.value });
+                        // Eğer yazılan değer personel listesinde varsa, bilgileri otomatik doldur
+                        const matchingPersonnel = personnelData.find(p => p.employeeId === e.target.value);
+                        if (matchingPersonnel) {
+                          handlePersonnelSelect(e.target.value);
+                        }
+                      }}
+                      onFocus={() => setShowPersonnelDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowPersonnelDropdown(false), 200)}
+                      className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Sicil no yazın veya listeden seçin"
+                      required
+                    />
+                    {showPersonnelDropdown && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+                        {personnelData
+                          .filter(personnel => 
+                            personnel.employeeId.toLowerCase().includes(newWorker.registrationNumber.toLowerCase()) ||
+                            personnel.firstName.toLowerCase().includes(newWorker.registrationNumber.toLowerCase()) ||
+                            personnel.lastName.toLowerCase().includes(newWorker.registrationNumber.toLowerCase())
+                          )
+                          .map((personnel) => (
+                            <div
+                              key={personnel.employeeId}
+                              className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                              onClick={() => {
+                                setNewWorker({ ...newWorker, registrationNumber: personnel.employeeId });
+                                handlePersonnelSelect(personnel.employeeId);
+                                setShowPersonnelDropdown(false);
+                              }}
+                            >
+                              {personnel.employeeId} - {personnel.firstName} {personnel.lastName} ({personnel.site})
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    id="worker-registration"
+                    value={newWorker.registrationNumber}
+                    onChange={(e) => setNewWorker({ ...newWorker, registrationNumber: e.target.value })}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Personel listesi bulunamadı, manuel girin"
+                    required
+                  />
+                )}
               </div>
               <div className="mb-4">
                 <label htmlFor="worker-project" className="block text-sm font-medium text-gray-700">Şantiye</label>

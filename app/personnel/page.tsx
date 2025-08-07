@@ -71,7 +71,7 @@ export default function PersonnelPage() {
       // Cache'i önlemek için timestamp ekle
       params.append('_t', Date.now().toString());
       
-      console.log('PersonnelPage Debug - Fetching with params:', params.toString());
+  
       
       const response = await fetch(`/api/personnel?${params}`, {
         cache: 'no-store',
@@ -83,7 +83,7 @@ export default function PersonnelPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('PersonnelPage Debug - Fetched data:', data);
+    
         setPersonnel(data);
       }
     } catch (error) {
@@ -155,7 +155,7 @@ export default function PersonnelPage() {
 
   // Düzenleme başarılı olduktan sonra listeyi güncelle
   const handleEditSuccess = async () => {
-    console.log('PersonnelPage Debug - handleEditSuccess called');
+
     setShowEditModal(false);
     setSelectedPersonnel(null);
     
@@ -178,7 +178,7 @@ export default function PersonnelPage() {
       // Cache'i önlemek için timestamp ekle
       params.append('_t', Date.now().toString());
       
-      console.log('PersonnelPage Debug - Refreshing list after edit with params:', params.toString());
+  
       
       const response = await fetch(`/api/personnel?${params}`, {
         cache: 'no-store',
@@ -190,7 +190,7 @@ export default function PersonnelPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('PersonnelPage Debug - Refreshed data after edit:', data);
+    
         setPersonnel(data);
       }
     } catch (error) {

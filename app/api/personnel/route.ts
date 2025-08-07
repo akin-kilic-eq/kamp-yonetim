@@ -13,10 +13,7 @@ export async function GET(request: Request) {
     const site = searchParams.get('site');
     const unknownSite = searchParams.get('unknownSite');
     
-    console.log('API Debug - Site:', site);
-    console.log('API Debug - Status:', status);
-    console.log('API Debug - Search:', search);
-    console.log('API Debug - UnknownSite:', unknownSite);
+
     
     let query: any = {};
     
@@ -52,14 +49,13 @@ export async function GET(request: Request) {
       ];
     }
     
-    console.log('API Debug - Final Query:', query);
+
     
     const personnel = await Personnel.find(query)
       .sort({ createdAt: -1 })
       .populate('createdBy', 'email');
     
-    console.log('API Debug - Found Personnel Count:', personnel.length);
-    console.log('API Debug - First Personnel Sample:', personnel[0]);
+
     
     const response = NextResponse.json(personnel);
     response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -128,8 +124,7 @@ export async function POST(request: Request) {
       );
     }
     
-    console.log('API Debug - User Site:', user.site);
-    console.log('API Debug - User ID:', user._id);
+
     
     // Tarih validasyonu ve dönüşümü
     let parsedHireDate;
@@ -175,11 +170,11 @@ export async function POST(request: Request) {
       createdBy: user._id
     });
     
-    console.log('API Debug - New Personnel Object:', newPersonnel);
+
     
     await newPersonnel.save();
     
-    console.log('API Debug - Personnel Saved Successfully');
+
     
     return NextResponse.json(newPersonnel, { status: 201 });
   } catch (error) {

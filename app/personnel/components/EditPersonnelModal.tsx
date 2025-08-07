@@ -110,7 +110,7 @@ export default function EditPersonnelModal({ personnel, onClose, onSuccess }: Ed
     setSuccess('');
 
     try {
-      console.log('EditPersonnelModal Debug - Sending Data:', formData);
+  
       
       const response = await fetch(`/api/personnel/${personnel._id}`, {
         method: 'PUT',
@@ -121,7 +121,7 @@ export default function EditPersonnelModal({ personnel, onClose, onSuccess }: Ed
       });
 
       const data = await response.json();
-      console.log('EditPersonnelModal Debug - Response:', data);
+  
 
       if (response.ok) {
         setSuccess(data.message || 'Personel başarıyla güncellendi');
