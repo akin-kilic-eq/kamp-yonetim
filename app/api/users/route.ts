@@ -17,8 +17,13 @@ export async function GET(request: Request) {
     if (!adminUser || adminUser.role !== 'santiye_admin' || !adminUser.site) {
       return NextResponse.json({ error: 'Erişim reddedildi' }, { status: 403 });
     }
+    
+    // Session storage'dan gelen activeSite parametresini kontrol et
+    const activeSite = searchParams.get('activeSite');
+    const targetSite = activeSite && activeSite.trim() !== '' ? activeSite : adminUser.site;
+    
     const count = await User.countDocuments({
-      site: adminUser.site,
+      site: targetSite,
       role: 'user',
       siteAccessApproved: false
     });
@@ -56,19 +61,39 @@ export async function GET(request: Request) {
 
     let users = [];
     if (requester.role === 'santiye_admin') {
-      users = await User.find({ site: requester.site });
+      // Session storage'dan gelen activeSite parametresini kontrol et
+      const activeSite = searchParams.get('activeSite');
+      console.log('API activeSite parametresi:', activeSite);
+      
+      // Eğer activeSite parametresi varsa, o şantiyedeki kullanıcıları getir
+      if (activeSite && activeSite.trim() !== '') {
+        users = await User.find({ site: activeSite });
+        console.log(`${activeSite} şantiyesindeki kullanıcı sayısı:`, users.length);
+      } else {
+        // Eğer activeSite yoksa, kullanıcının kendi şantiyesindeki kullanıcıları getir
+        users = await User.find({ site: requester.site });
+        console.log(`${requester.site} şantiyesindeki kullanıcı sayısı:`, users.length);
+      }
     } else {
       users = await User.find({});
     }
     // Eksik alanları boş string olarak tamamla ve şifreyi de döndür
     const usersWithPassword = users.map(u => {
+      // Admin roller için şantiye bilgisini "admin" olarak göster
+      let displaySite = u.site || '';
+      if (u.role === 'kurucu_admin' || u.role === 'merkez_admin') {
+        displaySite = 'admin';
+      }
+      
       // Şantiye admini rolündeki kullanıcılar için otomatik yetkiler
       if (u.role === 'santiye_admin') {
         return {
           email: u.email,
           password: u.password || '',
           role: u.role || '',
-          site: u.site || '',
+          site: displaySite,
+          sites: u.sites || [],
+          activeSite: u.activeSite || u.site || '',
           isApproved: typeof u.isApproved === 'boolean' ? u.isApproved : false,
           siteAccessApproved: true, // Şantiye admini için otomatik true
           sitePermissions: { 
@@ -85,7 +110,9 @@ export async function GET(request: Request) {
         email: u.email,
         password: u.password || '',
         role: u.role || '',
-        site: u.site || '',
+        site: displaySite,
+        sites: u.sites || [],
+        activeSite: u.activeSite || u.site || '',
         isApproved: typeof u.isApproved === 'boolean' ? u.isApproved : false,
         siteAccessApproved: typeof u.siteAccessApproved === 'boolean' ? u.siteAccessApproved : false,
         sitePermissions: u.sitePermissions || { canViewCamps: false, canEditCamps: false, canCreateCamps: false },
@@ -100,7 +127,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { email, password, site, role, requesterEmail } = await request.json();
+    const { email, password, site, role, requesterEmail, sites } = await request.json();
     if (!requesterEmail) {
       return NextResponse.json({ error: 'Erişim reddedildi' }, { status: 401 });
     }
@@ -114,14 +141,30 @@ export async function POST(request: Request) {
     if (existingUser) {
       return NextResponse.json({ error: 'Bu email adresi zaten kayıtlı' }, { status: 400 });
     }
-    const user = await User.create({
+    
+    // Admin roller için şantiye bilgisini "admin" olarak ayarla
+    let finalSite = site;
+    if (role === 'kurucu_admin' || role === 'merkez_admin') {
+      finalSite = 'admin';
+    }
+    
+    // Şantiye admini için sites array'ini hazırla
+    const userData: any = {
       email,
       password,
-      site,
+      site: finalSite,
       role: role || 'user',
       isApproved: false,
       camps: []
-    });
+    };
+    
+    // Şantiye admini için sites array'ini ekle
+    if (role === 'santiye_admin' && sites && sites.length > 0) {
+      userData.sites = sites;
+      userData.activeSite = sites[0]; // İlk şantiyeyi aktif olarak ayarla
+    }
+    
+    const user = await User.create(userData);
     return NextResponse.json({ message: 'Kullanıcı başarıyla oluşturuldu', user });
   } catch (error) {
     return NextResponse.json({ error: 'Kullanıcı oluşturulurken hata oluştu' }, { status: 500 });
@@ -130,7 +173,9 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const { email, isApproved, role, site, password, requesterEmail, siteAccessApproved, sitePermissions } = await request.json();
+    const { email, isApproved, role, site, password, requesterEmail, siteAccessApproved, sitePermissions, sites, activeSite } = await request.json();
+    
+    console.log('PATCH isteği alındı:', { email, role, site, sites });
     if (!requesterEmail) {
       return NextResponse.json({ error: 'Erişim reddedildi' }, { status: 401 });
     }
@@ -143,7 +188,11 @@ export async function PATCH(request: Request) {
     // Şantiye admini sadece kendi şantiyesindeki user'ların siteAccessApproved ve sitePermissions alanlarını güncelleyebilir
     if (requester.role === 'santiye_admin') {
       const targetUser = await User.findOne({ email });
-      if (!targetUser || targetUser.site !== requester.site || targetUser.role !== 'user') {
+      
+      // Active site bilgisini kontrol et
+      const targetSite = activeSite && activeSite.trim() !== '' ? activeSite : requester.site;
+      
+      if (!targetUser || targetUser.site !== targetSite || targetUser.role !== 'user') {
         return NextResponse.json({ error: 'Erişim reddedildi' }, { status: 403 });
       }
       const updateData: any = {};
@@ -165,10 +214,25 @@ export async function PATCH(request: Request) {
       const updateData: any = {};
       if (typeof isApproved === 'boolean') updateData.isApproved = isApproved;
       if (role) updateData.role = role;
-      if (site !== undefined) updateData.site = site;
+      
+      // Admin roller için şantiye bilgisini "admin" olarak ayarla
+      if (role === 'kurucu_admin' || role === 'merkez_admin') {
+        updateData.site = 'admin';
+      } else if (site !== undefined) {
+        updateData.site = site;
+      }
+      
       if (password && password.trim() !== '') updateData.password = password;
       if (typeof siteAccessApproved === 'boolean') updateData.siteAccessApproved = siteAccessApproved;
       if (sitePermissions) updateData.sitePermissions = sitePermissions;
+      
+      // Şantiye admini için sites array'ini güncelle
+      if (sites && sites.length > 0) {
+        updateData.sites = sites;
+        updateData.activeSite = sites[0]; // İlk şantiyeyi aktif olarak ayarla
+        console.log('Sites array güncelleniyor:', sites);
+      }
+      
       const updatedUser = await User.findOneAndUpdate(
         { email },
         { $set: updateData },

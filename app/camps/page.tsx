@@ -56,7 +56,7 @@ export default function CampsPage() {
     description: ''
   });
   const [joinCampCode, setJoinCampCode] = useState('');
-  const [currentUser, setCurrentUser] = useState<{ email: string; camps: string[]; role: string; site?: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email: string; camps: string[]; role: string; site?: string; sites?: string[]; activeSite?: string } | null>(null);
   const [error, setError] = useState('');
   const [generatedCodes, setGeneratedCodes] = useState<{ read: string; write: string } | null>(null);
   const [copiedCodeType, setCopiedCodeType] = useState<'read' | 'write' | null>(null);
@@ -88,27 +88,28 @@ export default function CampsPage() {
   // Santiye admin için ayrı işçi sayısı state'i
   const [santiyeAdminWorkerCount, setSantiyeAdminWorkerCount] = useState<number>(0);
   const [santiyeAdminWorkersLoaded, setSantiyeAdminWorkersLoaded] = useState<boolean>(false);
+  const [santiyeAdminStats, setSantiyeAdminStats] = useState<OverallStats | null>(null);
   
   // İşçi sayısını hesaplayan memoized değer - STABİL VERSİYON
   const workerCount = useMemo(() => {
     if (!overallStats) return 0;
     
     // Santiye admin için ayrı state'ten al
-    if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+    if (currentUser?.role === 'santiye_admin' && (currentUser?.activeSite || currentUser?.site)) {
       return santiyeAdminWorkerCount;
     }
     
     // Diğer roller için genel toplam
     return overallStats.totalWorkers || 0;
-  }, [santiyeAdminWorkerCount, overallStats?.totalWorkers, currentUser?.role, currentUser?.site]);
+  }, [santiyeAdminWorkerCount, overallStats?.totalWorkers, currentUser?.role, currentUser?.activeSite, currentUser?.site]);
   
   // Santiye admin için loading state kontrolü
   const isWorkerCountLoading = useMemo(() => {
-    if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
+    if (currentUser?.role === 'santiye_admin' && (currentUser?.activeSite || currentUser?.site)) {
       return loadingStats || !santiyeAdminWorkersLoaded;
     }
     return loadingStats || !overallStats;
-  }, [loadingStats, santiyeAdminWorkersLoaded, overallStats, currentUser?.role, currentUser?.site]);
+  }, [loadingStats, santiyeAdminWorkersLoaded, overallStats, currentUser?.role, currentUser?.activeSite, currentUser?.site]);
   
   // İlk yükleme için cache kontrolü - tüm kullanıcılar için
   useEffect(() => {
@@ -117,6 +118,22 @@ export default function CampsPage() {
       const user = JSON.parse(userSession);
       const cacheKey = `campsCache_${user.email}`;
       const cacheData = sessionStorage.getItem(cacheKey);
+      
+      // Şantiye admini için activeSite değişikliği kontrolü
+      if (user.role === 'santiye_admin') {
+        const currentActiveSite = user.activeSite || user.site;
+        const cachedActiveSite = sessionStorage.getItem(`lastActiveSite_${user.email}`);
+        
+        // Eğer activeSite değişmişse cache'i kullanma
+        if (cachedActiveSite && cachedActiveSite !== currentActiveSite) {
+          console.log('ActiveSite değişmiş, cache kullanılmayacak');
+          clearCampsCache(user.email);
+          sessionStorage.removeItem(`lastActiveSite_${user.email}`);
+        } else {
+          // ActiveSite aynıysa cache'i kullan
+          sessionStorage.setItem(`lastActiveSite_${user.email}`, currentActiveSite);
+        }
+      }
       
       if (cacheData) {
         try {
@@ -129,7 +146,12 @@ export default function CampsPage() {
             ? 30 * 60 * 1000  // 30 dakika
             : 5 * 60 * 1000;  // 5 dakika
           
-          if (cacheAge <= maxCacheAge && userRole === user.role) {
+          // ActiveSite kontrolü ekle
+          const cachedActiveSite = data.activeSite;
+          const currentActiveSite = user.activeSite || user.site;
+          const activeSiteMatches = !cachedActiveSite || cachedActiveSite === currentActiveSite;
+          
+          if (cacheAge <= maxCacheAge && userRole === user.role && activeSiteMatches) {
             // Cache geçerli, verileri göster
             setCamps(data);
             
@@ -163,8 +185,12 @@ export default function CampsPage() {
             setIsLoading(false);
             
             // Admin kullanıcılar için istatistikleri hemen yükle
-            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin' || user.role === 'santiye_admin') {
-              // İstatistikleri hemen yükle, loading state'ini true yap
+            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+              // Admin kullanıcılar için özel fonksiyon
+              setLoadingStats(true);
+              loadStatsAdmin(data);
+            } else if (user.role === 'santiye_admin') {
+              // Şantiye admini için normal fonksiyon
               setLoadingStats(true);
               loadStats(data);
             }
@@ -203,8 +229,12 @@ export default function CampsPage() {
             setIsLoading(false);
             
             // Admin kullanıcılar için istatistikleri hemen yükle
-            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin' || user.role === 'santiye_admin') {
-              // İstatistikleri hemen yükle, loading state'ini true yap
+            if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+              // Admin kullanıcılar için özel fonksiyon
+              setLoadingStats(true);
+              loadStatsAdmin(data);
+            } else if (user.role === 'santiye_admin') {
+              // Şantiye admini için normal fonksiyon
               setLoadingStats(true);
               loadStats(data);
             }
@@ -229,8 +259,11 @@ export default function CampsPage() {
     const userEmail = email || currentUser?.email;
     if (userEmail) {
       const cacheKey = `campsCache_${userEmail}`;
+      const lastActiveSiteKey = `lastActiveSite_${userEmail}`;
       sessionStorage.removeItem(cacheKey);
+      sessionStorage.removeItem(lastActiveSiteKey);
       console.log('Kamp cache temizlendi:', cacheKey);
+      console.log('LastActiveSite cache temizlendi:', lastActiveSiteKey);
     }
     // Cache temizlendiğinde stats ref'ini sıfırla
     statsLoadedRef.current = false;
@@ -309,15 +342,92 @@ export default function CampsPage() {
   // currentUser değiştiğinde istatistikleri yükle
   useEffect(() => {
     if (currentUser && camps.length > 0 && !statsLoadedRef.current) {
-      if (currentUser.role === 'kurucu_admin' || currentUser.role === 'merkez_admin' || currentUser.role === 'santiye_admin') {
-        // İstatistikleri yükle ve loading state'ini true yap
+      if (currentUser.role === 'kurucu_admin' || currentUser.role === 'merkez_admin') {
+        // Admin kullanıcılar için özel fonksiyon
+        setLoadingStats(true);
+        loadStatsAdmin(camps);
+        loadSiteNames();
+        statsLoadedRef.current = true;
+      } else if (currentUser.role === 'santiye_admin') {
+        // Şantiye admini için normal fonksiyon
         setLoadingStats(true);
         loadStats(camps);
         loadSiteNames();
         statsLoadedRef.current = true;
       }
     }
-  }, [currentUser, camps]);
+  }, [currentUser, currentUser?.activeSite, camps]);
+
+  // Şantiye admini için activeSite değiştiğinde cache'i temizle ve verileri yeniden çek
+  useEffect(() => {
+    if (currentUser?.role === 'santiye_admin' && currentUser?.email) {
+      console.log('ActiveSite değişti, cache temizleniyor...');
+      // Cache'i temizle
+      clearCampsCache(currentUser.email);
+      // Stats ref'ini sıfırla
+      statsLoadedRef.current = false;
+      // Santiye admin işçi sayısını sıfırla
+      setSantiyeAdminWorkerCount(0);
+      setSantiyeAdminWorkersLoaded(false);
+      // Kampları yeniden çek
+      loadCamps(currentUser.email, false);
+      // İstatistikleri yeniden hesapla
+      setLoadingStats(true);
+    }
+  }, [currentUser?.activeSite]);
+
+  // Session storage değişikliklerini dinle
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'currentUser' && currentUser?.role === 'santiye_admin') {
+        try {
+          const newUser = JSON.parse(e.newValue || '{}');
+          const oldActiveSite = currentUser?.activeSite || currentUser?.site;
+          const newActiveSite = newUser.activeSite || newUser.site;
+          
+          if (oldActiveSite !== newActiveSite) {
+            console.log('Session storage\'da activeSite değişti:', oldActiveSite, '->', newActiveSite);
+            // Cache'i zorla temizle
+            clearCampsCache(currentUser.email);
+            // Stats ref'ini sıfırla
+            statsLoadedRef.current = false;
+            // Santiye admin işçi sayısını sıfırla
+            setSantiyeAdminWorkerCount(0);
+            setSantiyeAdminWorkersLoaded(false);
+            // Kullanıcıyı güncelle
+            setCurrentUser(newUser);
+            // Kampları yeniden çek
+            loadCamps(newUser.email, false);
+            // İstatistikleri yeniden hesapla
+            setLoadingStats(true);
+          }
+        } catch (error) {
+          console.error('Session storage parse hatası:', error);
+        }
+      }
+    };
+
+    const handleActiveSiteChange = (e: CustomEvent) => {
+      if (currentUser?.role === 'santiye_admin') {
+        console.log('Custom event: activeSite değişti:', e.detail);
+        // Cache'i zorla temizle
+        clearCampsCache(currentUser.email);
+        // Stats ref'ini sıfırla
+        statsLoadedRef.current = false;
+        // Santiye admin işçi sayısını sıfırla
+        setSantiyeAdminWorkerCount(0);
+        setSantiyeAdminWorkersLoaded(false);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('activeSiteChanged', handleActiveSiteChange as EventListener);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('activeSiteChanged', handleActiveSiteChange as EventListener);
+    };
+  }, [currentUser]);
 
   const loadCamps = async (email: string, isBackgroundRefresh: boolean = false) => {
     try {
@@ -331,12 +441,20 @@ export default function CampsPage() {
         setIsLoading(true);
       }
       
-      const response = await getCamps(email, user.role);
+      // Şantiye admini için activeSite parametresini gönder
+      // currentUser state'ini öncelikle kullan, yoksa session storage'dan al
+      let activeSiteParam;
+      if (user.role === 'santiye_admin') {
+        activeSiteParam = currentUser?.activeSite || user.activeSite || user.site;
+      }
+      const response = await getCamps(email, user.role, activeSiteParam);
       if (response.error) {
         setError(response.error);
         setIsLoading(false);
         return;
       }
+      
+      // Backend'de filtreleme yapıldığı için frontend'de filtreleme yapmıyoruz
       setCamps(response);
       
       // Cache'e kaydet - session storage'dan gelen yetkileri kullan
@@ -369,16 +487,30 @@ export default function CampsPage() {
         data: response,
         timestamp: Date.now(),
         userRole: user.role,
-        permissions: permissionsToCache
+        permissions: permissionsToCache,
+        activeSite: user.activeSite || user.site // ActiveSite bilgisini de cache'e kaydet
       };
       sessionStorage.setItem(`campsCache_${email}`, JSON.stringify(cacheDataToSave));
       setLastCacheTime(Date.now());
       
+      // Şantiye admini için activeSite'i ayrıca kaydet
+      if (user.role === 'santiye_admin') {
+        sessionStorage.setItem(`lastActiveSite_${email}`, user.activeSite || user.site);
+      }
+      
       // Admin kullanıcılar için istatistikleri hemen yükle (sadece ilk yüklemede)
-      if (!isBackgroundRefresh && (user.role === 'santiye_admin' || user.role === 'merkez_admin' || user.role === 'kurucu_admin')) {
-        setLoadingStats(true);
-        loadStats(response);
-        loadSiteNames();
+      if (!isBackgroundRefresh) {
+        if (user.role === 'kurucu_admin' || user.role === 'merkez_admin') {
+          // Admin kullanıcılar için özel fonksiyon
+          setLoadingStats(true);
+          loadStatsAdmin(response);
+          loadSiteNames();
+        } else if (user.role === 'santiye_admin') {
+          // Şantiye admini için normal fonksiyon
+          setLoadingStats(true);
+          loadStats(response);
+          loadSiteNames();
+        }
       }
       
       // Loading'i kapat
@@ -391,160 +523,360 @@ export default function CampsPage() {
     }
   };
 
-  // İstatistikleri yükle
-  const loadStats = async (campsData: Camp[]) => {
+  // Admin kullanıcılar için özel istatistik yükleme fonksiyonu
+  const loadStatsAdmin = async (campsData: Camp[]) => {
+    console.log('=== LOADSTATSADMIN BAŞLADI ===');
+    console.log('Admin için tüm kamplar:', campsData.map(c => ({ name: c.name, site: c.site, creatorSite: c.creatorSite })));
+    
     setLoadingStats(true);
     try {
-      const stats: Record<string, SiteStats> = {};
-      let totalWorkers = 0;
-      let totalBeds = 0;
-      let occupiedBeds = 0;
-
-      // 1. Tüm işçileri getir ve şantiye bazında grupla - EN BAŞTA YAP
-      const workersResponse = await fetch('/api/workers');
-      const allWorkers = await workersResponse.json();
-      
-      // İşçileri şantiye bazında grupla
-      const workersBySite: Record<string, number> = {};
-      allWorkers.forEach((worker: any) => {
-        const site = worker.project || 'Şantiye Belirtilmemiş';
-        workersBySite[site] = (workersBySite[site] || 0) + 1;
+      // Şantiye isimlerini al
+      const sitesResponse = await fetch('/api/sites');
+      const sitesData = await sitesResponse.json();
+      const siteIdToName: Record<string, string> = {};
+      sitesData.forEach((site: any) => {
+        siteIdToName[site._id] = site.name;
       });
       
-      // Santiye admin için işçi sayısını hemen hesapla
-      let santiyeAdminWorkers = 0;
-      if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
-        const userSite = currentUser.site;
+      // GENEL ÖZET İÇİN - Tüm sistemin toplam istatistikleri (filtreleme yok)
+      let generalTotalWorkers = 0;
+      let generalTotalBeds = 0;
+      let generalOccupiedBeds = 0;
+      let generalTotalCamps = 0;
+
+      // Tüm kampları işle - Genel özet için
+      for (const camp of campsData) {
+        try {
+          console.log(`\n--- Kamp ${camp.name} genel özet için işleniyor ---`);
+          const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
+          const campStats = await response.json();
+          
+          if (campStats && !campStats.error) {
+            console.log('Kamp genel istatistikleri:', {
+              name: camp.name,
+              totalWorkers: campStats.totalWorkers,
+              totalCapacity: campStats.totalCapacity
+            });
+            
+            // Genel özet için tüm verileri topla (filtreleme yok)
+            generalTotalWorkers += campStats.totalWorkers || 0;
+            generalTotalBeds += campStats.totalCapacity || 0;
+            generalOccupiedBeds += campStats.totalWorkers || 0;
+            generalTotalCamps += 1;
+          }
+        } catch (error) {
+          console.error(`Kamp ${camp._id} genel istatistikleri yüklenemedi:`, error);
+        }
+      }
+
+      // ŞANTİYE BAZLI ÖZET İÇİN - TAMAMEN DÜZELTİLMİŞ MANTIK
+      const siteBasedStats: Record<string, SiteStats> = {};
+      
+      // Tüm işçileri getir ve şantiyelerine göre gruplandır
+      try {
+        // Her kamp için işçileri ayrı ayrı getir ve topla
+        const allWorkers: any[] = [];
+        
+        for (const camp of campsData) {
+          try {
+            const workersResponse = await fetch(`/api/workers?campId=${camp._id}`);
+            const campWorkers = await workersResponse.json();
+            
+            if (Array.isArray(campWorkers)) {
+              allWorkers.push(...campWorkers);
+            }
+          } catch (error) {
+            console.error(`Kamp ${camp._id} işçileri yüklenemedi:`, error);
+          }
+        }
+        
+        console.log('\n--- İşçiler şantiyelerine göre gruplandırılıyor ---');
+        console.log('Toplam işçi sayısı (tüm kamplardan):', allWorkers.length);
+        
+        // İşçileri şantiyelerine göre gruplandır (worker.project alanına göre)
+        const workersBySite: Record<string, number> = {};
+        allWorkers.forEach((worker: any) => {
+          const workerSite = worker.project || 'Şantiye Belirtilmemiş';
+          workersBySite[workerSite] = (workersBySite[workerSite] || 0) + 1;
+        });
+        
+        console.log('İşçi dağılımı (worker.project alanına göre):', workersBySite);
+        
+        // Her şantiye için istatistikleri başlat - SADECE İŞÇİ SAYILARI
+        Object.keys(workersBySite).forEach(site => {
+          siteBasedStats[site] = {
+            totalWorkers: workersBySite[site], // Sadece bu şantiyede çalışan işçiler
+            totalBeds: 0, // Kamp kapasiteleri ayrı hesaplanacak
+            occupiedBeds: 0, // İşçi sayısına eşit olacak
+            availableBeds: 0, // Hesaplanacak
+            occupancyRate: 0, // Hesaplanacak
+            campCount: 0 // Kamp sayısı ayrı hesaplanacak
+          };
+        });
+        
+        // Kampları işle - Şantiye bazlı özet için KAMP KAPASİTELERİ
+        for (const camp of campsData) {
+          try {
+            // Kampın odalarını getir
+            const roomsResponse = await fetch(`/api/rooms?campId=${camp._id}`);
+            const campRooms = await roomsResponse.json();
+            
+            if (Array.isArray(campRooms)) {
+              console.log(`Kamp ${camp.name} odaları:`, campRooms.length);
+              
+              // Her odayı kendi şantiyesine ekle
+              campRooms.forEach((room: any) => {
+                const roomSite = room.project || 'Şantiye Belirtilmemiş';
+                
+                if (siteBasedStats[roomSite]) {
+                  siteBasedStats[roomSite].totalBeds += room.capacity || 0;
+                }
+              });
+              
+              // Kamp sayısını ana şantiyeye ekle
+              const campSite = camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş';
+              if (siteBasedStats[campSite]) {
+                siteBasedStats[campSite].campCount += 1;
+              }
+            }
+          } catch (error) {
+            console.error(`Kamp ${camp._id} odaları yüklenemedi:`, error);
+          }
+        }
+        
+        // Şantiye bazında doluluk oranlarını hesapla
+        Object.keys(siteBasedStats).forEach(site => {
+          // İşçi sayısı zaten workersBySite'den geliyor (worker.project alanına göre)
+          siteBasedStats[site].occupiedBeds = siteBasedStats[site].totalWorkers; // İşçi sayısı = dolu yatak sayısı
+          siteBasedStats[site].availableBeds = siteBasedStats[site].totalBeds - siteBasedStats[site].occupiedBeds;
+          siteBasedStats[site].occupancyRate = siteBasedStats[site].totalBeds > 0 
+            ? Math.round((siteBasedStats[site].occupiedBeds / siteBasedStats[site].totalBeds) * 100) 
+            : 0;
+        });
+        
+      } catch (error) {
+        console.error('İşçi verileri yüklenirken hata:', error);
+      }
+
+      // Genel özet hesaplamaları
+      const generalAvailableBeds = generalTotalBeds - generalOccupiedBeds;
+      const generalOccupancyRate = generalTotalBeds > 0 ? Math.round((generalOccupiedBeds / generalTotalBeds) * 100) : 0;
+
+      const overall: OverallStats = {
+        totalWorkers: generalTotalWorkers,
+        totalBeds: generalTotalBeds,
+        occupiedBeds: generalOccupiedBeds,
+        availableBeds: generalAvailableBeds,
+        occupancyRate: generalOccupancyRate,
+        totalCamps: generalTotalCamps,
+        totalSites: Object.keys(siteBasedStats).length,
+        santiyeAdminWorkers: 0
+      };
+
+      console.log('\n=== ADMIN İSTATİSTİK SONUÇ ===');
+      console.log('Genel özet (filtreleme yok):', overall);
+      console.log('Şantiye bazlı özet (worker.project alanına göre):', siteBasedStats);
+
+      setSiteStats(siteBasedStats);
+      setOverallStats(overall);
+    } catch (error) {
+      console.error('Admin istatistikleri yüklenirken hata:', error);
+    } finally {
+      setLoadingStats(false);
+      statsLoadedRef.current = true;
+    }
+  };
+
+  // İstatistikleri yükle - YENİ SİSTEM
+  const loadStats = async (campsData: Camp[]) => {
+    console.log('=== LOADSTATS BAŞLADI ===');
+    console.log('Gelen kamplar:', campsData.map(c => ({ name: c.name, site: c.site, creatorSite: c.creatorSite })));
+    console.log('Mevcut kullanıcı:', {
+      role: currentUser?.role,
+      activeSite: currentUser?.activeSite,
+      site: currentUser?.site
+    });
+    console.log('Mevcut overallStats:', overallStats);
+    
+    setLoadingStats(true);
+    try {
+      // Admin kullanıcılar için özel fonksiyon kullan
+      if (currentUser?.role === 'kurucu_admin' || currentUser?.role === 'merkez_admin') {
+        console.log('Admin kullanıcı tespit edildi, loadStatsAdmin çağrılıyor...');
+        await loadStatsAdmin(campsData);
+        return;
+      }
+      
+      // Şantiye admini için sadece seçili şantiyenin istatistiklerini hesapla
+      if (currentUser?.role === 'santiye_admin' && (currentUser?.activeSite || currentUser?.site)) {
+        const userSite = currentUser.activeSite || currentUser.site;
+        console.log('=== ŞANTİYE ADMIN İSTATİSTİK HESAPLAMA ===');
+        console.log('Seçili şantiye:', userSite);
+        console.log('Toplam kamp sayısı:', campsData.length);
+        
+        // Sadece seçili şantiyeye ait kampları filtrele
         const userSiteCamps = campsData.filter(camp => 
           camp.creatorSite === userSite || camp.site === userSite
         );
         
-        const userSiteCampIds = userSiteCamps.map(camp => camp._id);
-        const filteredWorkers = allWorkers.filter((worker: any) => 
-          worker.campId && userSiteCampIds.includes(worker.campId.toString())
-        );
-        santiyeAdminWorkers = filteredWorkers.length;
+        console.log('Filtrelenmiş kamplar:', userSiteCamps.map(c => ({ 
+          name: c.name, 
+          site: c.site, 
+          creatorSite: c.creatorSite,
+          _id: c._id 
+        })));
         
-        console.log('Santiye Admin Debug:', {
-          userSite,
-          userSiteCamps: userSiteCamps.length,
-          userSiteCampIds,
-          totalWorkers: allWorkers.length,
-          filteredWorkers: filteredWorkers.length,
-          santiyeAdminWorkers
-        });
-      }
-
-      // 2. Tüm kampları tek seferde işle
-      for (const camp of campsData) {
-        try {
-          const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
-          const campStats = await response.json();
-          if (campStats && !campStats.error) {
-            const campSite = camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş';
+        let totalWorkers = 0;
+        let totalBeds = 0;
+        let occupiedBeds = 0;
+        
+        // Tüm kampları kontrol et (ortak kullanımlı kamplar için)
+        for (const camp of campsData) {
+          console.log(`\n--- Kamp ${camp.name} kontrol ediliyor ---`);
+          console.log('Kamp bilgileri:', {
+            name: camp.name,
+            site: camp.site,
+            creatorSite: camp.creatorSite,
+            isPublic: camp.isPublic,
+            sharedWithSites: camp.sharedWithSites
+          });
+          
+          try {
+            const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
+            const campStats = await response.json();
             
-            // Kampın kendi şantiyesi için istatistikler
-            if (!stats[campSite]) {
-              stats[campSite] = {
-                totalWorkers: 0,
-                totalBeds: 0,
-                occupiedBeds: 0,
-                availableBeds: 0,
-                occupancyRate: 0,
-                campCount: 0
-              };
+            console.log('API yanıtı:', campStats);
+            
+            if (campStats && !campStats.error) {
+              // Seçili şantiyeye kayıtlı kamp mı kontrol et
+              if (camp.creatorSite === userSite || camp.site === userSite) {
+                console.log('Seçili şantiyeye kayıtlı kamp tespit edildi');
+                
+                // Bu kampın TÜM istatistiklerini al (içindeki işçi/oda kime ait olduğu farketmez)
+                console.log('Kampın genel istatistikleri:', {
+                  totalWorkers: campStats.totalWorkers,
+                  totalCapacity: campStats.totalCapacity
+                });
+                totalWorkers += campStats.totalWorkers || 0;
+                totalBeds += campStats.totalCapacity || 0;
+                occupiedBeds += campStats.totalWorkers || 0;
+              }
             }
-            
-            // Kapasite: Kampın kendi şantiyesine yazılır
-            stats[campSite].totalBeds += campStats.totalCapacity || 0;
-            stats[campSite].occupiedBeds += campStats.totalWorkers || 0;
-            stats[campSite].campCount += 1;
-            totalBeds += campStats.totalCapacity || 0;
-            occupiedBeds += campStats.totalWorkers || 0;
-            
-            // İşçi sayısı: Sadece o şantiyeye ait işçileri say
-            if (campStats.siteStats && campStats.siteStats[campSite]) {
-              stats[campSite].totalWorkers += campStats.siteStats[campSite].workers || 0;
-            }
-            
-            // Ortak kullanımlı kamplar için diğer şantiyelerin istatistikleri
-            if (camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0) {
-              camp.sharedWithSites.forEach((sharedSiteId: string) => {
-                // Şantiye ID'sini isme çevir
-                const sharedSite = campStats.availableSites?.find((site: any) => site._id === sharedSiteId);
-                if (sharedSite && campStats.siteStats && campStats.siteStats[sharedSite.name]) {
-                  const sharedSiteName = sharedSite.name;
-                  
-                  if (!stats[sharedSiteName]) {
-                    stats[sharedSiteName] = {
-                      totalWorkers: 0,
-                      totalBeds: 0,
-                      occupiedBeds: 0,
-                      availableBeds: 0,
-                      occupancyRate: 0,
-                      campCount: 0
-                    };
-                  }
-                  
-                  // Ortak kullanımlı şantiyeler için sadece o şantiyeye ait işçileri say
-                  stats[sharedSiteName].totalWorkers += campStats.siteStats[sharedSiteName].workers || 0;
-                  stats[sharedSiteName].totalBeds += campStats.siteStats[sharedSiteName].capacity || 0;
-                  stats[sharedSiteName].occupiedBeds += campStats.siteStats[sharedSiteName].workers || 0;
-                  stats[sharedSiteName].campCount += 1;
-                }
-              });
-            }
+          } catch (error) {
+            console.error(`Kamp ${camp._id} istatistikleri yüklenemedi:`, error);
           }
-        } catch (error) {
-          console.error(`Kamp ${camp._id} istatistikleri yüklenemedi:`, error);
         }
-      }
-
-      // Şantiye bazında doluluk oranlarını hesapla
-      Object.keys(stats).forEach(site => {
-        stats[site].availableBeds = stats[site].totalBeds - stats[site].occupiedBeds;
-        stats[site].occupancyRate = stats[site].totalBeds > 0 
-          ? Math.round((stats[site].occupiedBeds / stats[site].totalBeds) * 100) 
-          : 0;
-      });
-
-      // Sadece ortak kullanımlı şantiyelerdeki işçileri topla
-      Object.keys(stats).forEach(site => {
-        const hasSharedCamps = campsData.some(camp => 
-          camp.creatorSite === site && camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0
-        );
-        if (hasSharedCamps) {
-          totalWorkers += stats[site].totalWorkers;
-        }
-      });
-
-
-
-      // Genel istatistikleri hesapla
-      const overall: OverallStats = {
-        totalWorkers,
-        totalBeds,
-        occupiedBeds,
-        availableBeds: totalBeds - occupiedBeds,
-        occupancyRate: totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0,
-        totalCamps: campsData.length,
-        totalSites: Object.keys(stats).length,
-        santiyeAdminWorkers
-      };
-
-      setSiteStats(stats);
-      setOverallStats(overall);
-      
-      // Santiye admin için işçi sayısını ayrı state'e kaydet
-      if (currentUser?.role === 'santiye_admin' && currentUser?.site) {
-        setSantiyeAdminWorkerCount(santiyeAdminWorkers);
+        
+        const availableBeds = totalBeds - occupiedBeds;
+        const occupancyRate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
+        
+        console.log('\n=== ŞANTİYE ADMIN SONUÇ ===');
+        console.log('Hesaplanan değerler:', {
+          userSite,
+          totalCamps: userSiteCamps.length,
+          totalWorkers,
+          totalBeds,
+          occupiedBeds,
+          availableBeds,
+          occupancyRate
+        });
+        
+        // Şantiye admin için özel istatistikler
+        setSantiyeAdminWorkerCount(totalWorkers);
         setSantiyeAdminWorkersLoaded(true);
+        
+        // Overall stats'i güncelle
+        const overall: OverallStats = {
+          totalWorkers: 0, // Genel toplam kullanılmıyor
+          totalBeds,
+          occupiedBeds,
+          availableBeds,
+          occupancyRate,
+          totalCamps: userSiteCamps.length,
+          totalSites: 1, // Sadece seçili şantiye
+          santiyeAdminWorkers: totalWorkers
+        };
+        
+        console.log('Şantiye admin stats güncelleniyor:', overall);
+        setSantiyeAdminStats(overall);
+        
+        // State güncellemesini kontrol et
+        setTimeout(() => {
+          console.log('State güncellemesi sonrası santiyeAdminStats:', santiyeAdminStats);
+        }, 100);
+        
+      } else {
+        // User rolü için eski sistem
+        const stats: Record<string, SiteStats> = {};
+        let totalWorkers = 0;
+        let totalBeds = 0;
+        let occupiedBeds = 0;
+
+        // Tüm işçileri getir
+        const workersResponse = await fetch('/api/workers');
+        const allWorkers = await workersResponse.json();
+        
+        // Tüm kampları işle
+        for (const camp of campsData) {
+          try {
+            const response = await fetch(`/api/reports/stats?campId=${camp._id}`);
+            const campStats = await response.json();
+            if (campStats && !campStats.error) {
+              const campSite = camp.creatorSite || camp.site || 'Şantiye Belirtilmemiş';
+              
+              if (!stats[campSite]) {
+                stats[campSite] = {
+                  totalWorkers: 0,
+                  totalBeds: 0,
+                  occupiedBeds: 0,
+                  availableBeds: 0,
+                  occupancyRate: 0,
+                  campCount: 0
+                };
+              }
+              
+              stats[campSite].totalBeds += campStats.totalCapacity || 0;
+              stats[campSite].occupiedBeds += campStats.totalWorkers || 0;
+              stats[campSite].campCount += 1;
+              totalBeds += campStats.totalCapacity || 0;
+              occupiedBeds += campStats.totalWorkers || 0;
+              
+              if (campStats.siteStats && campStats.siteStats[campSite]) {
+                stats[campSite].totalWorkers += campStats.siteStats[campSite].workers || 0;
+              }
+            }
+          } catch (error) {
+            console.error(`Kamp ${camp._id} istatistikleri yüklenemedi:`, error);
+          }
+        }
+
+        // Şantiye bazında doluluk oranlarını hesapla
+        Object.keys(stats).forEach(site => {
+          stats[site].availableBeds = stats[site].totalBeds - stats[site].occupiedBeds;
+          stats[site].occupancyRate = stats[site].totalBeds > 0 
+            ? Math.round((stats[site].occupiedBeds / stats[site].totalBeds) * 100) 
+            : 0;
+        });
+
+        const overall: OverallStats = {
+          totalWorkers,
+          totalBeds,
+          occupiedBeds,
+          availableBeds: totalBeds - occupiedBeds,
+          occupancyRate: totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0,
+          totalCamps: campsData.length,
+          totalSites: Object.keys(stats).length,
+          santiyeAdminWorkers: 0
+        };
+
+        setSiteStats(stats);
+        setOverallStats(overall);
       }
     } catch (error) {
       console.error('İstatistikler yüklenirken hata:', error);
     } finally {
       setLoadingStats(false);
-      statsLoadedRef.current = true; // İstatistikler yüklendiğini işaretle
+      statsLoadedRef.current = true;
     }
   };
 
@@ -562,15 +894,37 @@ export default function CampsPage() {
       setError('Lütfen kamp adını giriniz');
       return;
     }
+    
+
+    
     try {
-      const response = await createCamp({
+      const campData: any = {
         ...newCamp,
         userEmail: currentUser?.email
-      });
-      if (response.error) {
-        setError(response.error);
-        return;
-      }
+      };
+      
+      // Şantiye admini için aktif şantiyeyi gönder
+      if (currentUser?.role === 'santiye_admin' && (currentUser?.activeSite || currentUser?.site)) {
+        campData.currentSite = currentUser.activeSite || currentUser.site;
+        console.log('Frontend - Şantiye admini kamp oluşturuyor:', {
+          campData,
+          currentUser: {
+            email: currentUser.email,
+            role: currentUser.role,
+            activeSite: currentUser.activeSite,
+            site: currentUser.site,
+            sites: currentUser.sites
+          }
+        });
+      } else {
+            }
+    
+    const response = await createCamp(campData);
+    
+    if (response.error) {
+      setError(response.error);
+      return;
+    }
       setCamps([...camps, response]);
       // Cache'i temizle - yeni kamp eklendi
       clearCampsCache();
@@ -667,22 +1021,35 @@ export default function CampsPage() {
   };
 
   const handleCampClick = async (camp: Camp) => {
+    console.log('=== KAMP TIKLAMA BAŞLADI ===');
+    console.log('Tıklanan kamp:', {
+      id: camp._id,
+      name: camp.name,
+      site: camp.site,
+      creatorSite: camp.creatorSite,
+      userEmail: camp.userEmail
+    });
+    console.log('Mevcut kullanıcı:', {
+      email: currentUser?.email,
+      role: currentUser?.role,
+      site: currentUser?.site,
+      activeSite: currentUser?.activeSite,
+      sites: currentUser?.sites
+    });
+
     if (!currentUser) {
       router.push('/login');
       return;
     }
 
     try {
+      console.log('API çağrısı yapılıyor:', `/api/camps/${camp._id}`);
+      
       // Kampın tam bilgilerini API'den al
       const response = await fetch(`/api/camps/${camp._id}`);
       const campData = await response.json();
       
-      console.log('Kamp seçildi:', {
-        campId: camp._id,
-        campName: camp.name,
-        campData: campData,
-        currentUser: currentUser
-      });
+      console.log('API yanıtı:', campData);
       
       if (campData.error) {
         console.error('Kamp bilgileri alınamadı:', campData.error);
@@ -691,6 +1058,7 @@ export default function CampsPage() {
       } else {
         // Tam kamp bilgilerini localStorage'a kaydet
         localStorage.setItem('currentCamp', JSON.stringify(campData));
+        console.log('Kamp bilgileri localStorage\'a kaydedildi');
       }
 
       // URL'yi oluştur
@@ -702,6 +1070,9 @@ export default function CampsPage() {
         .replace(/ö/g, 'o')
         .replace(/ç/g, 'c')
         .replace(/\s+/g, '');
+
+      console.log('Oluşturulan URL:', `/${formattedName}/dashboard`);
+      console.log('Yönlendirme yapılıyor...');
 
       // Yönlendirme yap
       router.push(`/${formattedName}/dashboard`);
@@ -1036,14 +1407,19 @@ export default function CampsPage() {
           </div>
         )}
         {/* Şantiye admini için özel panel erişim kutusu */}
-        {currentUser?.role === 'santiye_admin' && (
+        {currentUser?.role === 'santiye_admin' && (currentUser?.activeSite || currentUser?.site) && (
           <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 mb-6 rounded flex items-center justify-between">
             <div>
               <div className="font-bold text-lg mb-1">Şantiye Admini Paneli</div>
-              <div className="text-sm">Şantiye yönetimi ve gelişmiş işlemler için admin paneline erişebilirsiniz.</div>
+              <div className="text-sm">
+                {currentUser?.activeSite || currentUser?.site} - Şantiye yönetimi ve gelişmiş işlemler için admin paneline erişebilirsiniz.
+              </div>
             </div>
             <button
-              onClick={() => router.push('/santiye-admin-paneli')}
+              onClick={() => {
+                const activeSite = currentUser?.activeSite || currentUser?.site;
+                router.push(`/santiye-admin-paneli?site=${encodeURIComponent(activeSite || '')}`);
+              }}
               className="ml-6 px-5 py-2 rounded bg-yellow-500 hover:bg-yellow-600 hover:scale-105 text-white font-semibold shadow transition-all duration-300 ease-out relative flex items-center"
             >
               Şantiye Admini Paneline Git
@@ -1057,7 +1433,7 @@ export default function CampsPage() {
         )}
 
         {/* Şantiye admini için şantiye özeti - YENİ TASARIM */}
-        {currentUser?.role === 'santiye_admin' && (
+        {currentUser?.role === 'santiye_admin' && (currentUser?.activeSite || currentUser?.site) && (
           <div className="bg-gradient-to-br from-slate-50 to-blue-50 border border-slate-200 rounded-2xl shadow-xl p-8 mb-8 animate-slideUp opacity-0" style={{ animationDelay: '0.15s', animationFillMode: 'forwards' }}>
             <div className="flex items-center justify-between mb-8">
               <div className="flex items-center">
@@ -1068,7 +1444,9 @@ export default function CampsPage() {
                 </div>
                 <div>
                   <h2 className="text-3xl font-bold text-slate-800 mb-1">Şantiye Özeti</h2>
-                  <p className="text-slate-600 text-lg">Yönettiğiniz şantiyenin genel durumu</p>
+                  <p className="text-slate-600 text-lg">
+                    {currentUser?.activeSite || currentUser?.site} - Genel Durum
+                  </p>
                 </div>
               </div>
               <div className="text-right">
@@ -1134,13 +1512,15 @@ export default function CampsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold text-slate-600 mb-2">Toplam Kapasite</p>
-                    {loadingStats || !overallStats ? (
+                    {loadingStats || !(currentUser?.role === 'santiye_admin' ? santiyeAdminStats : overallStats) ? (
                       <div className="flex items-center space-x-3">
                         <div className="w-8 h-8 border-3 border-amber-200 border-t-amber-600 rounded-full animate-spin"></div>
                         <span className="text-lg text-slate-500 font-medium">Yükleniyor...</span>
                       </div>
                     ) : (
-                      <p className="text-4xl font-bold text-amber-600 group-hover:text-amber-700 transition-colors">{overallStats?.totalBeds || 0}</p>
+                      <p className="text-4xl font-bold text-amber-600 group-hover:text-amber-700 transition-colors">
+                        {currentUser?.role === 'santiye_admin' ? santiyeAdminStats?.totalBeds || 0 : overallStats?.totalBeds || 0}
+                      </p>
                     )}
                   </div>
                   <div className="w-14 h-14 bg-gradient-to-br from-amber-100 to-amber-200 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -1163,13 +1543,15 @@ export default function CampsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold text-slate-600 mb-2">Doluluk Oranı</p>
-                    {loadingStats || !overallStats ? (
+                    {loadingStats || !(currentUser?.role === 'santiye_admin' ? santiyeAdminStats : overallStats) ? (
                       <div className="flex items-center space-x-3">
                         <div className="w-8 h-8 border-3 border-violet-200 border-t-violet-600 rounded-full animate-spin"></div>
                         <span className="text-lg text-slate-500 font-medium">Yükleniyor...</span>
                       </div>
                     ) : (
-                      <p className="text-4xl font-bold text-violet-600 group-hover:text-violet-700 transition-colors">%{overallStats?.occupancyRate || 0}</p>
+                      <p className="text-4xl font-bold text-violet-600 group-hover:text-violet-700 transition-colors">
+                        %{currentUser?.role === 'santiye_admin' ? santiyeAdminStats?.occupancyRate || 0 : overallStats?.occupancyRate || 0}
+                      </p>
                     )}
                   </div>
                   <div className="w-14 h-14 bg-gradient-to-br from-violet-100 to-violet-200 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -1186,10 +1568,16 @@ export default function CampsPage() {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                {isAdminUser ? 'Tüm Kamplar' : 'Kamplarım'}
+                {currentUser?.role === 'santiye_admin' 
+                  ? `${currentUser?.activeSite || currentUser?.site} - Kamplar` 
+                  : isAdminUser ? 'Tüm Kamplar' : 'Kamplarım'
+                }
               </h1>
               <p className="text-gray-600">
-                {isAdminUser ? 'Sistemdeki tüm kampların listesi' : 'Yönettiğiniz kampların listesi'}
+                {currentUser?.role === 'santiye_admin' 
+                  ? `${currentUser?.activeSite || currentUser?.site} şantiyesindeki kampların listesi`
+                  : isAdminUser ? 'Sistemdeki tüm kampların listesi' : 'Yönettiğiniz kampların listesi'
+                }
               </p>
               {lastCacheTime > 0 && (
                 <p className="text-xs text-gray-500 mt-1">
@@ -1290,7 +1678,7 @@ export default function CampsPage() {
                         <svg className="w-5 h-5 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                         </svg>
-                        Şantiye Bazlı Özet ({overallStats.totalSites} şantiye)
+                        Şantiye Bazlı Özet ({Object.keys(siteStats).length} şantiye)
                       </h3>
                       <svg 
                         className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
@@ -1310,19 +1698,18 @@ export default function CampsPage() {
                       {Object.keys(siteStats).sort().map((site) => {
                         const stats = siteStats[site];
                         const hasSharedCamps = camps.some(camp => 
-                          camp.creatorSite === site && camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0
+                          (camp.creatorSite === site || camp.site === site) && camp.isPublic && camp.sharedWithSites && camp.sharedWithSites.length > 0
                         );
                         
-                        // Sadece ortak kullanımlı şantiyeleri göster
-                        if (!hasSharedCamps) return null;
-                        
                         return (
-                          <div key={site} className="bg-white/80 backdrop-blur-sm rounded-lg p-4 border border-blue-200 shadow-sm hover:shadow-md transition-shadow">
+                          <div key={site} className={`bg-white/80 backdrop-blur-sm rounded-lg p-4 border shadow-sm hover:shadow-md transition-shadow ${
+                            hasSharedCamps ? 'border-blue-200' : 'border-gray-200'
+                          }`}>
                             <h4 className="font-bold text-gray-800 mb-3 flex items-center">
                               <svg className="w-4 h-4 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                               </svg>
-                              {siteNames[site] || site} Ortak Kullanım
+                              {site}
                               {hasSharedCamps && (
                                 <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
                                   Ortak Kullanım

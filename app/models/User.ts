@@ -22,6 +22,16 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false
   },
+  // Şantiye admini için birden fazla şantiye atanabilmesi
+  sites: [{
+    type: String,
+    required: false
+  }],
+  // Aktif şantiye seçimi için
+  activeSite: {
+    type: String,
+    required: false
+  },
   siteAccessApproved: {
     type: Boolean,
     default: false

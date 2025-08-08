@@ -17,6 +17,8 @@ interface User {
   email: string;
   role?: string;
   site?: string;
+  sites?: string[];
+  activeSite?: string;
   siteAccessApproved?: boolean;
   sitePermissions?: {
     canViewCamps?: boolean;
@@ -63,14 +65,20 @@ export default function CampLayout({
       }
 
       // Şantiye admini kendi şantiyesindeki user'ların kamplarına erişebilir
-      if (currentUser.role === 'santiye_admin' && currentUser.site) {
+      if (currentUser.role === 'santiye_admin') {
+        // Şantiye admini için activeSite veya site kullan
+        const userSite = currentUser.activeSite || currentUser.site;
+        
         console.log('Şantiye admini kontrolü:', {
-          userSite: currentUser.site,
+          userSite: userSite,
           campSite: currentCamp.site,
-          userRole: currentUser.role
+          userRole: currentUser.role,
+          activeSite: currentUser.activeSite,
+          defaultSite: currentUser.site
         });
+        
         // Kamp sahibinin şantiye bilgisini kontrol et
-        if (currentCamp.site === currentUser.site) {
+        if (currentCamp.site === userSite) {
           console.log('Şantiye admini erişim verildi');
           return; // Aynı şantiyedeki kamp, erişim ver
         }

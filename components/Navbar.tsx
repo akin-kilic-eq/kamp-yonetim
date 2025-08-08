@@ -8,13 +8,15 @@ export default function Navbar() {
   const router = useRouter();
   const params = useParams();
   const [campName, setCampName] = useState('');
-  const [currentUser, setCurrentUser] = useState<{ email: string; role?: string; site?: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email: string; role?: string; site?: string; sites?: string[]; activeSite?: string } | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     const userSession = sessionStorage.getItem('currentUser');
     if (userSession) {
-      setCurrentUser(JSON.parse(userSession));
+      const user = JSON.parse(userSession);
+  
+      setCurrentUser(user);
     }
 
     if (params.camp) {
@@ -64,23 +66,72 @@ export default function Navbar() {
   // Personel yönetimi kullanıcıları için özel menü
   if (currentUser && (currentUser.role === 'personel_admin' || currentUser.role === 'personel_user')) {
     return (
-      <nav className="bg-green-800 text-white px-6 py-3 flex justify-between items-center">
+      <nav className="bg-green-800 text-white px-6 py-3 flex justify-between items-center relative z-[99999]">
         <div className="font-bold text-xl">Personel Yönetimi Paneli</div>
         <div className="flex gap-6 items-center">
-          <a href="/personnel" className="hover:underline">Personel Listesi</a>
-          <a href="/personnel/reports" className="hover:underline">Personel Raporu</a>
-          {currentUser.role === 'personel_admin' && (
-            <a href="/personnel/settings" className="hover:underline">Ayarlar</a>
-          )}
-          <button
-            onClick={() => {
-              sessionStorage.removeItem('currentUser');
-              router.push('/login');
-            }}
-            className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-white ml-4"
-          >
-            Çıkış
-          </button>
+          <span className="text-sm">{currentUser.email}</span>
+          
+          {/* Dropdown Menü */}
+          <div className="relative z-[9999999]">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsMenuOpen(!isMenuOpen);
+              }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 flex items-center"
+            >
+              Menü
+              <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            
+            {isMenuOpen && (
+              <div 
+                className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-[999999]"
+                style={{ 
+                  position: 'absolute', 
+                  zIndex: 9999999
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <a
+                  href="/personnel"
+                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Personel Listesi
+                </a>
+                <a
+                  href="/personnel/reports"
+                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Personel Raporu
+                </a>
+                {currentUser.role === 'personel_admin' && (
+                  <a
+                    href="/personnel/settings"
+                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Ayarlar
+                  </a>
+                )}
+                <hr className="my-1" />
+                <button
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    sessionStorage.removeItem('currentUser');
+                    router.push('/login');
+                  }}
+                  className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                >
+                  Çıkış
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </nav>
     );
@@ -269,6 +320,49 @@ export default function Navbar() {
                 <div className="flex items-center space-x-4">
                   <span className="text-sm text-gray-500">{currentUser.email}</span>
                   
+                  {/* Şantiye Seçme Dropdown'u - Sadece birden fazla şantiye varsa göster */}
+                  {currentUser.role === 'santiye_admin' && currentUser.sites && currentUser.sites.length > 1 && (
+                    <div className="relative z-[9999999]">
+                      <select
+                        value={currentUser.activeSite || currentUser.site || ''}
+                        onChange={(e) => {
+                          const newActiveSite = e.target.value;
+                  
+                          // Önce tüm cache'leri temizle
+                          const keys = Object.keys(sessionStorage);
+                          keys.forEach(key => {
+                            if (key.startsWith('campsCache_') || key.startsWith('lastActiveSite_')) {
+                              sessionStorage.removeItem(key);
+                              console.log('Cache temizlendi:', key);
+                            }
+                          });
+                          
+                          // Session storage'da kullanıcı bilgilerini güncelle
+                          const updatedUser = { ...currentUser, activeSite: newActiveSite };
+                          sessionStorage.setItem('currentUser', JSON.stringify(updatedUser));
+                          setCurrentUser(updatedUser);
+                          
+                          console.log('Şantiye değiştirildi:', newActiveSite, 'Cache temizlendi');
+                          
+                          // Custom event tetikle
+                          window.dispatchEvent(new CustomEvent('activeSiteChanged', {
+                            detail: { oldSite: currentUser.activeSite || currentUser.site, newSite: newActiveSite }
+                          }));
+                          
+                          // Sayfayı yenile
+                          window.location.reload();
+                        }}
+                        className="bg-white border border-gray-300 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {currentUser.sites.map((site) => (
+                          <option key={site} value={site}>
+                            {site}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  
                   {/* Dropdown Menü */}
                   <div className="relative z-[9999999]">
                     <button
@@ -301,7 +395,7 @@ export default function Navbar() {
                           Şantiye Admin Paneli
                         </a>
                         <a
-                          href={`/personnel/reports?site=${currentUser.site}`}
+                          href={`/personnel/reports?site=${currentUser.activeSite || currentUser.site}`}
                           className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                           onClick={() => setIsMenuOpen(false)}
                         >

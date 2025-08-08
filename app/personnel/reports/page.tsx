@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { BarChart3, Users, Building, Globe, TrendingUp, FileText } from 'lucide-react';
+import { BarChart3, Users, Building, Globe, TrendingUp, FileText, X } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 
 interface Personnel {
@@ -46,6 +46,222 @@ interface GeneralStats {
   companiesCount: number;
 }
 
+// Durum rengi fonksiyonu
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'active': return 'bg-green-100 text-green-800';
+    case 'inactive': return 'bg-yellow-100 text-yellow-800';
+    case 'terminated': return 'bg-red-100 text-red-800';
+    default: return 'bg-gray-100 text-gray-800';
+  }
+};
+
+// Ülke Detay Modal Bileşeni
+function CountryDetailModal({ 
+  isOpen, 
+  onClose, 
+  country, 
+  personnel 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  country: string; 
+  personnel: Personnel[] 
+}) {
+  if (!isOpen) return null;
+
+  const countryPersonnel = personnel.filter(p => p.country === country);
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-lg shadow-xl max-w-7xl w-full max-h-[90vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+            <Globe className="mr-2" size={24} />
+            {country} - Personel Listesi
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
+          <div className="p-6">
+            <div className="mb-4">
+              <p className="text-gray-600">Toplam {countryPersonnel.length} personel bulundu</p>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Ad Soyad
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Çalışan ID
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Şirket
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Pozisyon
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Durum
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      İşe Başlama
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {countryPersonnel.map((person) => (
+                    <tr key={person._id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {person.firstName} {person.lastName}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {person.employeeId}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {person.company}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {person.jobTitle}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(person.status)}`}>
+                          {person.status === 'active' ? 'Aktif' : person.status === 'inactive' ? 'Pasif' : 'İşten Ayrılan'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {new Date(person.hireDate).toLocaleDateString('tr-TR')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Şirket Detay Modal Bileşeni
+function CompanyDetailModal({ 
+  isOpen, 
+  onClose, 
+  company, 
+  personnel 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  company: string; 
+  personnel: Personnel[] 
+}) {
+  if (!isOpen) return null;
+
+  const companyPersonnel = personnel.filter(p => p.company === company);
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-lg shadow-xl max-w-7xl w-full max-h-[90vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900 flex items-center">
+            <Building className="mr-2" size={24} />
+            {company} - Personel Listesi
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
+          <div className="p-6">
+            <div className="mb-4">
+              <p className="text-gray-600">Toplam {companyPersonnel.length} personel bulundu</p>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Ad Soyad
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Çalışan ID
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Ülke
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Pozisyon
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Durum
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      İşe Başlama
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {companyPersonnel.map((person) => (
+                    <tr key={person._id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {person.firstName} {person.lastName}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {person.employeeId}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {person.country}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {person.jobTitle}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(person.status)}`}>
+                          {person.status === 'active' ? 'Aktif' : person.status === 'inactive' ? 'Pasif' : 'İşten Ayrılan'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                        {new Date(person.hireDate).toLocaleDateString('tr-TR')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PersonnelReportsContent() {
   const [personnel, setPersonnel] = useState<Personnel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,6 +279,12 @@ function PersonnelReportsContent() {
   const [companySummary, setCompanySummary] = useState<CompanySummary[]>([]);
   const [searchParams, setSearchParams] = useState<URLSearchParams | null>(null);
   const searchParamsHook = useSearchParams();
+  
+  // Modal state'leri
+  const [selectedCountry, setSelectedCountry] = useState<string>('');
+  const [selectedCompany, setSelectedCompany] = useState<string>('');
+  const [isCountryModalOpen, setIsCountryModalOpen] = useState(false);
+  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
 
   const fetchPersonnel = async () => {
     try {
@@ -195,13 +417,16 @@ function PersonnelReportsContent() {
     }
   }, [searchParams]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'inactive': return 'bg-yellow-100 text-yellow-800';
-      case 'terminated': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+  // Ülke modal'ını aç
+  const openCountryModal = (country: string) => {
+    setSelectedCountry(country);
+    setIsCountryModalOpen(true);
+  };
+
+  // Şirket modal'ını aç
+  const openCompanyModal = (company: string) => {
+    setSelectedCompany(company);
+    setIsCompanyModalOpen(true);
   };
 
   // Server-side rendering sırasında loading göster
@@ -339,7 +564,11 @@ function PersonnelReportsContent() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {countrySummary.map((country) => (
-                    <tr key={country.country} className="hover:bg-gray-50">
+                    <tr 
+                      key={country.country} 
+                      className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      onClick={() => openCountryModal(country.country)}
+                    >
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {country.country}
                       </td>
@@ -399,7 +628,11 @@ function PersonnelReportsContent() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {companySummary.map((company) => (
-                    <tr key={company.company} className="hover:bg-gray-50">
+                    <tr 
+                      key={company.company} 
+                      className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      onClick={() => openCompanyModal(company.company)}
+                    >
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {company.company}
                       </td>
@@ -429,6 +662,21 @@ function PersonnelReportsContent() {
           </div>
         </div>
       </div>
+
+      {/* Modaller */}
+      <CountryDetailModal
+        isOpen={isCountryModalOpen}
+        onClose={() => setIsCountryModalOpen(false)}
+        country={selectedCountry}
+        personnel={personnel}
+      />
+      
+      <CompanyDetailModal
+        isOpen={isCompanyModalOpen}
+        onClose={() => setIsCompanyModalOpen(false)}
+        company={selectedCompany}
+        personnel={personnel}
+      />
     </div>
   );
 }

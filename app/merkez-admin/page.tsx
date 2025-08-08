@@ -9,7 +9,7 @@ export default function MerkezAdminPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newUser, setNewUser] = useState({ email: '', password: '', site: '', role: 'user' });
+  const [newUser, setNewUser] = useState({ email: '', password: '', site: '', role: 'user', sites: [] as string[] });
   const [activeTab, setActiveTab] = useState<'all' | 'pending'>('all');
   const [search, setSearch] = useState('');
 
@@ -81,13 +81,29 @@ export default function MerkezAdminPanel() {
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const currentUser = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
+    
+    const userData: any = { 
+      email: newUser.email, 
+      password: newUser.password, 
+      role: newUser.role, 
+      requesterEmail: currentUser.email 
+    };
+    
+    // Şantiye admini için sites array'ini gönder
+    if (newUser.role === 'santiye_admin') {
+      userData.sites = newUser.sites;
+      userData.site = newUser.sites[0] || '';
+    } else {
+      userData.site = newUser.site;
+    }
+    
     await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newUser, requesterEmail: currentUser.email })
+      body: JSON.stringify(userData)
     });
     setShowAddModal(false);
-    setNewUser({ email: '', password: '', site: '', role: 'user' });
+    setNewUser({ email: '', password: '', site: '', role: 'user', sites: [] });
     fetchUsers(currentUser.email);
   };
 
@@ -203,7 +219,20 @@ export default function MerkezAdminPanel() {
                         <option value="personel_user">Personel User</option>
                       </select>
                     </td>
-                    <td className="border px-6 py-3 whitespace-nowrap text-center">{u.site}</td>
+                    <td className="border px-6 py-3 whitespace-nowrap text-center">
+                      {u.role === 'santiye_admin' && u.sites && u.sites.length > 0 ? (
+                        <div>
+                          <div className="font-medium">{u.site}</div>
+                          <div className="text-xs text-gray-500">
+                            {u.sites.length > 1 ? `${u.sites.length} şantiye atanmış` : '1 şantiye atanmış'}
+                          </div>
+                        </div>
+                      ) : u.role === 'kurucu_admin' || u.role === 'merkez_admin' ? (
+                        <span className="text-blue-600 font-medium">admin</span>
+                      ) : (
+                        u.site
+                      )}
+                    </td>
                     <td className="border px-6 py-3 whitespace-nowrap text-center">
                       {u.isApproved ? (
                         <button onClick={() => handleApprove(u.email, false)} className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded">Onayı Kaldır</button>
@@ -254,14 +283,41 @@ export default function MerkezAdminPanel() {
             <form onSubmit={handleAddUser} className="space-y-4">
               <input type="email" required placeholder="Email" className="w-full border rounded px-3 py-2" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} />
               <input type="password" required placeholder="Şifre" className="w-full border rounded px-3 py-2" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
-              <select required className="w-full border rounded px-3 py-2" value={newUser.site} onChange={e => setNewUser({ ...newUser, site: e.target.value })}>
-                <option value="" disabled>Şantiye seçin</option>
-                {sites.map((site) => (
-                  <option key={site._id} value={site.name}>
-                    {site.name}
-                  </option>
-                ))}
-              </select>
+              {newUser.role === 'santiye_admin' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Şantiyeler (Çoklu seçim)</label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto border rounded p-2">
+                    {sites.map((site) => (
+                      <label key={site._id} className="flex items-center">
+                        <input
+                          type="checkbox"
+                          value={site.name}
+                          checked={newUser.sites?.includes(site.name) || false}
+                          onChange={(e) => {
+                            const siteName = e.target.value;
+                            const currentSites = newUser.sites || [];
+                            const updatedSites = e.target.checked
+                              ? [...currentSites, siteName]
+                              : currentSites.filter(s => s !== siteName);
+                            setNewUser({ ...newUser, sites: updatedSites, site: updatedSites[0] || '' });
+                          }}
+                          className="mr-2"
+                        />
+                        {site.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <select required className="w-full border rounded px-3 py-2" value={newUser.site} onChange={e => setNewUser({ ...newUser, site: e.target.value })}>
+                  <option value="" disabled>Şantiye seçin</option>
+                  {sites.map((site) => (
+                    <option key={site._id} value={site.name}>
+                      {site.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <select required className="w-full border rounded px-3 py-2" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                 <option value="user">User</option>
                 <option value="santiye_admin">Şantiye Admini</option>

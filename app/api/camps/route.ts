@@ -19,13 +19,9 @@ async function checkCampPermission(campId: string, userEmail: string): Promise<b
     return true;
   }
 
-  // Şantiye admini kontrolü - kendi şantiyesindeki user'ların kamplarını düzenleyebilir
-  if (user && user.role === 'santiye_admin' && user.site) {
-    // Kamp sahibinin şantiye bilgisini kontrol et
-    const campOwner = await User.findOne({ email: camp.userEmail });
-    if (campOwner && campOwner.site === user.site) {
-      return true; // Aynı şantiyedeki user'ın kampı
-    }
+  // Şantiye admini için tam yetki - tüm kamplara erişebilir
+  if (user && user.role === 'santiye_admin') {
+    return true;
   }
 
   // User rolündeki kullanıcılar için şantiye erişim yetkisi ve düzenleme izni kontrolü
@@ -49,6 +45,9 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const userEmail = searchParams.get('userEmail');
     const role = (searchParams.get('role') || '').toLowerCase();
+    const activeSite = searchParams.get('activeSite');
+
+
 
     await connectDB();
 
@@ -56,19 +55,42 @@ export async function GET(request: Request) {
     let query = {};
     if (role === 'kurucu_admin' || role === 'merkez_admin' || userEmail === 'kurucu_admin@antteq.com') {
       query = {}; // Tüm kampları getir
+
     } else if (role === 'santiye_admin') {
-      // Şantiye admini için kendi şantiyesindeki tüm kampları getir
+      // Şantiye admini için aktif şantiyesindeki kampları getir
       const adminUser = await User.findOne({ email: userEmail });
-      if (adminUser && adminUser.site) {
-        // Şantiye admininin şantiyesindeki tüm kullanıcıları bul
-        const siteUsers = await User.find({ site: adminUser.site });
-        const siteUserEmails = siteUsers.map(user => user.email);
+      
+      // Frontend'den gelen activeSite parametresini öncelikli olarak kullan
+      const currentActiveSite = activeSite || adminUser?.activeSite || adminUser?.site;
+      
+      if (adminUser && currentActiveSite) {
         
-        // Bu kullanıcıların oluşturduğu kampları getir
+        // Aktif şantiyedeki kampları getir
+        // 1. Aktif şantiyede oluşturulan kamplar (creatorSite veya site alanına göre)
+        // 2. Kullanıcının kendi oluşturduğu kamplar (eğer aktif şantiyede oluşturulmuşsa)
+        // 3. Kullanıcıya paylaşılan kamplar
         query = {
-          userEmail: { $in: siteUserEmails }
+          $or: [
+            { creatorSite: currentActiveSite },
+            { site: currentActiveSite },
+            { 
+              $and: [
+                { userEmail: userEmail },
+                { 
+                  $or: [
+                    { creatorSite: currentActiveSite },
+                    { site: currentActiveSite }
+                  ]
+                }
+              ]
+            },
+            { "sharedWith.email": userEmail }
+          ]
         };
+        
+
       } else {
+
         // Şantiye bilgisi yoksa sadece kendi kamplarını göster
         query = {
           $or: [
@@ -77,9 +99,11 @@ export async function GET(request: Request) {
           ]
         };
       }
-    } else {
+    } else if (role === 'user') {
       // User rolündeki kullanıcılar için şantiye erişim yetkisi ve kamp izinlerini kontrol et
       const user = await User.findOne({ email: userEmail });
+      
+
       
       // Şantiye erişim yetkisi kontrolü
       if (!user || !user.siteAccessApproved) {
@@ -121,9 +145,20 @@ export async function GET(request: Request) {
           ]
         };
       }
+    } else {
+      // Diğer roller için sadece kendi kamplarını göster
+
+      query = {
+        $or: [
+          { userEmail },
+          { "sharedWith.email": userEmail }
+        ]
+      };
     }
 
     const camps = await Camp.find(query);
+    
+
     
     // Kamp oluşturan kişilerin şantiye bilgilerini al
     const campCreators = [...new Set(camps.map(camp => camp.userEmail))];
@@ -136,8 +171,11 @@ export async function GET(request: Request) {
     // Kamplara şantiye bilgisini ekle
     const campsWithSites = camps.map(camp => ({
       ...camp.toObject(),
-      creatorSite: userSiteMap[camp.userEmail] || 'Şantiye Belirtilmemiş'
+      // Kampın kendi creatorSite alanı varsa onu kullan, yoksa kullanıcının site bilgisini kullan
+      creatorSite: camp.creatorSite || userSiteMap[camp.userEmail] || 'Şantiye Belirtilmemiş'
     }));
+    
+
 
     return NextResponse.json(campsWithSites);
   } catch (error) {
@@ -150,23 +188,34 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { name, description, userEmail } = await request.json();
+    const { name, description, userEmail, currentSite } = await request.json();
+    
+
 
     await connectDB();
 
     // Kamp oluşturan kullanıcının site bilgisini al
     const user = await User.findOne({ email: userEmail });
-    const userSite = user?.site || null;
 
-    const camp = await Camp.create({
+    
+    let userSite = user?.site || 'Şantiye Belirtilmemiş';
+
+    // Şantiye admini için aktif şantiyeyi kullan
+    if (user?.role === 'santiye_admin' && currentSite) {
+      userSite = currentSite;
+    }
+
+    const campData = {
       name,
       description,
       userEmail,
       site: userSite, // Kullanıcının site bilgisini kampa kaydet
+      creatorSite: userSite, // Şantiye admini için ek alan
       sharedWith: [],
       rooms: []
-    });
-
+    };
+    
+    const camp = await Camp.create(campData);
     return NextResponse.json(camp);
   } catch (error) {
     return NextResponse.json(

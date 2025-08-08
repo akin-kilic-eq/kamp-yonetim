@@ -21,8 +21,13 @@ export const login = async (email: string, password: string) => {
 };
 
 // Camp API
-export const getCamps = async (userEmail: string, role?: string) => {
-  const url = role ? `/api/camps?userEmail=${userEmail}&role=${role}` : `/api/camps?userEmail=${userEmail}`;
+export const getCamps = async (userEmail: string, role?: string, activeSite?: string) => {
+  const params = new URLSearchParams();
+  params.append('userEmail', userEmail);
+  if (role) params.append('role', role);
+  if (activeSite) params.append('activeSite', activeSite);
+  
+  const url = `/api/camps?${params.toString()}`;
   const response = await fetch(url);
   return response.json();
 };

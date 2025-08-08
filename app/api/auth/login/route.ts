@@ -21,6 +21,8 @@ export async function POST(request: Request) {
       email: user.email,
       role: user.role,
       site: user.site,
+      sites: user.sites,
+      activeSite: user.activeSite,
       isApproved: user.isApproved,
       siteAccessApproved: user.siteAccessApproved,
       sitePermissions: user.sitePermissions
@@ -40,6 +42,8 @@ export async function POST(request: Request) {
         email: user.email,
         role: user.role,
         site: user.site,
+        sites: user.sites || [],
+        activeSite: user.activeSite || user.site || '',
         isApproved: user.isApproved,
         siteAccessApproved: user.siteAccessApproved,
         sitePermissions: user.sitePermissions,

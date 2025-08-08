@@ -18,6 +18,10 @@ const CampSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  creatorSite: {
+    type: String,
+    trim: true
+  },
   isPublic: {
     type: Boolean,
     default: false

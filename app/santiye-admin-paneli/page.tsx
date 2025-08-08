@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import { cache } from '@/app/lib/cache';
+import { useSearchParams } from 'next/navigation';
 
 interface User {
   email: string;
@@ -42,6 +43,7 @@ interface SitePermissions {
 }
 
 export default function SantiyeAdminPaneli() {
+  const searchParams = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [camps, setCamps] = useState<Camp[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -49,7 +51,7 @@ export default function SantiyeAdminPaneli() {
   const [loadingCamps, setLoadingCamps] = useState(true);
   const [loadingSites, setLoadingSites] = useState(true);
   const [error, setError] = useState("");
-  const [currentUser, setCurrentUser] = useState<{ email: string; site?: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email: string; site?: string; activeSite?: string } | null>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedCamp, setSelectedCamp] = useState<Camp | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -90,7 +92,18 @@ export default function SantiyeAdminPaneli() {
         }
         const user = JSON.parse(userStr);
         setCurrentUser(user);
-        const res = await fetch(`/api/users?email=${user.email}`);
+        
+        // Session storage'dan currentUser'ı al ve activeSite bilgisini çıkar
+        const currentUserStr = sessionStorage.getItem("currentUser");
+        let activeSite = '';
+        if (currentUserStr) {
+          const currentUserData = JSON.parse(currentUserStr);
+          activeSite = currentUserData.activeSite || currentUserData.site || '';
+        }
+        console.log('Session storage activeSite:', activeSite);
+        
+        // Şantiye admini için activeSite parametresi ile kullanıcıları getir
+        const res = await fetch(`/api/users?email=${user.email}&activeSite=${encodeURIComponent(activeSite)}`);
         const data = await res.json();
         if (data.error) setError(data.error);
         else setUsers(data);
@@ -108,8 +121,11 @@ export default function SantiyeAdminPaneli() {
         if (!userStr) return;
         
         const user = JSON.parse(userStr);
-        if (user.role === 'santiye_admin' && user.site) {
-          const res = await fetch(`/api/camps?userEmail=${user.email}&role=${user.role}`);
+        // URL'den site parametresini al, yoksa user.site kullan
+        const siteParam = searchParams.get('site') || user.site;
+        
+        if (user.role === 'santiye_admin' && siteParam) {
+          const res = await fetch(`/api/camps?userEmail=${user.email}&role=${user.role}&activeSite=${encodeURIComponent(siteParam)}`);
           const data = await res.json();
           if (!data.error) {
             setCamps(data);
@@ -327,6 +343,8 @@ export default function SantiyeAdminPaneli() {
     try {
       const userStr = sessionStorage.getItem("currentUser");
       const current = userStr ? JSON.parse(userStr) : null;
+      const activeSite = current?.activeSite || current?.site || '';
+      
       const res = await fetch("/api/users", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -334,7 +352,8 @@ export default function SantiyeAdminPaneli() {
           email: selectedUser.email,
           siteAccessApproved: editAccessApproved,
           sitePermissions: editPermissions,
-          requesterEmail: current?.email
+          requesterEmail: current?.email,
+          activeSite: activeSite // Active site bilgisini de gönder
         })
       });
       const data = await res.json();
@@ -376,7 +395,14 @@ export default function SantiyeAdminPaneli() {
         <Navbar />
         <div className="max-w-5xl mx-auto bg-white rounded-lg shadow-lg p-8 mt-10">
           <div className="flex justify-between items-center mb-8">
-            <h1 className="text-3xl font-bold text-black text-center w-full">Şantiye Admini Paneli</h1>
+            <div className="text-center w-full">
+              <h1 className="text-3xl font-bold text-black">Şantiye Admini Paneli</h1>
+              {currentUser && (
+                <p className="text-lg text-gray-600 mt-2">
+                  Aktif Şantiye: {currentUser.activeSite || currentUser.site || "Belirtilmemiş"}
+                </p>
+              )}
+            </div>
             <button
               onClick={() => window.history.back()}
               className="ml-4 px-8 py-1.5 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold shadow transition-all duration-200 whitespace-nowrap flex items-center justify-center text-base"
@@ -407,6 +433,7 @@ export default function SantiyeAdminPaneli() {
                       <tr>
                         <th className="border px-6 py-3 text-center">Email</th>
                         <th className="border px-6 py-3 text-center">Rol</th>
+                        <th className="border px-6 py-3 text-center">Şantiye</th>
                         <th className="border px-6 py-3 text-center">Şantiye Erişim Onayı</th>
                         <th className="border px-6 py-3 text-center">Kayıt Tarihi</th>
                       </tr>
@@ -422,6 +449,13 @@ export default function SantiyeAdminPaneli() {
                           >
                             <td className="border px-6 py-3 whitespace-nowrap text-center">{u.email}</td>
                             <td className="border px-6 py-3 whitespace-nowrap text-center">{u.role}</td>
+                            <td className="border px-6 py-3 whitespace-nowrap text-center">
+                              {u.role === 'kurucu_admin' || u.role === 'merkez_admin' ? (
+                                <span className="text-blue-600 font-medium">admin</span>
+                              ) : (
+                                u.site || '-'
+                              )}
+                            </td>
                             <td className="border px-6 py-3 whitespace-nowrap text-center">
                               {u.siteAccessApproved ? (
                                 <span className="text-green-600 font-semibold">Verildi</span>

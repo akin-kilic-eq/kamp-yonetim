@@ -11,8 +11,8 @@ export default function AdminPanel() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editUser, setEditUser] = useState<any>(null);
-  const [newUser, setNewUser] = useState({ email: '', password: '', site: '', role: 'user' });
-  const [editFields, setEditFields] = useState({ password: '', site: '' });
+  const [newUser, setNewUser] = useState({ email: '', password: '', site: '', role: 'user', sites: [] as string[] });
+  const [editFields, setEditFields] = useState({ password: '', site: '', sites: [] as string[] });
   const [activeTab, setActiveTab] = useState<'all' | 'pending'>('all');
   const [search, setSearch] = useState('');
   const [fixingSites, setFixingSites] = useState(false);
@@ -153,13 +153,29 @@ export default function AdminPanel() {
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const currentUser = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
+    
+    const userData: any = { 
+      email: newUser.email, 
+      password: newUser.password, 
+      role: newUser.role, 
+      requesterEmail: currentUser.email 
+    };
+    
+    // Şantiye admini için sites array'ini gönder
+    if (newUser.role === 'santiye_admin') {
+      userData.sites = newUser.sites;
+      userData.site = newUser.sites[0] || '';
+    } else {
+      userData.site = newUser.site;
+    }
+    
     await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newUser, requesterEmail: currentUser.email })
+      body: JSON.stringify(userData)
     });
     setShowAddModal(false);
-    setNewUser({ email: '', password: '', site: '', role: 'user' });
+    setNewUser({ email: '', password: '', site: '', role: 'user', sites: [] });
     fetchUsers(currentUser.email);
   };
 
@@ -167,14 +183,32 @@ export default function AdminPanel() {
   const handleEditUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const currentUser = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
+    
+    const updateData: any = { 
+      email: editUser.email, 
+      password: editFields.password, 
+      requesterEmail: currentUser.email 
+    };
+    
+    // Şantiye admini için sites array'ini gönder
+    if (editUser.role === 'santiye_admin') {
+      updateData.sites = editFields.sites;
+      updateData.site = editFields.sites[0] || '';
+      console.log('Şantiye admini güncelleniyor:', updateData);
+    } else {
+      updateData.site = editFields.site;
+    }
+    
+    console.log('Gönderilen veri:', updateData);
+    
     await fetch('/api/users', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: editUser.email, site: editFields.site, password: editFields.password, requesterEmail: currentUser.email })
+      body: JSON.stringify(updateData)
     });
     setShowEditModal(false);
     setEditUser(null);
-    setEditFields({ password: '', site: '' });
+    setEditFields({ password: '', site: '', sites: [] });
     fetchUsers(currentUser.email);
   };
 
@@ -333,7 +367,20 @@ export default function AdminPanel() {
                         <option value="kurucu_admin">Kurucu Admin</option>
                       </select>
                     </td>
-                    <td className="border px-6 py-3 whitespace-nowrap">{u.site}</td>
+                    <td className="border px-6 py-3 whitespace-nowrap">
+                      {u.role === 'santiye_admin' && u.sites && u.sites.length > 0 ? (
+                        <div>
+                          <div className="font-medium">{u.site}</div>
+                          <div className="text-xs text-gray-500">
+                            {u.sites.length > 1 ? `${u.sites.length} şantiye atanmış` : '1 şantiye atanmış'}
+                          </div>
+                        </div>
+                      ) : u.role === 'kurucu_admin' || u.role === 'merkez_admin' ? (
+                        <span className="text-blue-600 font-medium">admin</span>
+                      ) : (
+                        u.site
+                      )}
+                    </td>
                     <td className="border px-6 py-3">
                       {u.isApproved ? (
                         <button onClick={() => handleApprove(u.email, false)} className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded">Onayı Kaldır</button>
@@ -343,7 +390,16 @@ export default function AdminPanel() {
                     </td>
                     <td className="border px-6 py-3 whitespace-nowrap">{u.password}</td>
                     <td className="border px-6 py-3">
-                      <button onClick={() => { setEditUser(u); setEditFields({ password: '', site: u.site }); setShowEditModal(true); }} className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-2 rounded mr-2">Düzenle</button>
+                      <button onClick={() => { 
+                        console.log('Düzenleme modalı açılıyor:', u);
+                        setEditUser(u); 
+                        setEditFields({ 
+                          password: '', 
+                          site: u.site, 
+                          sites: u.sites || [] 
+                        }); 
+                        setShowEditModal(true); 
+                      }} className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-2 rounded mr-2">Düzenle</button>
                       <button onClick={() => handleDelete(u.email)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded">Sil</button>
                     </td>
                   </tr>
@@ -361,14 +417,41 @@ export default function AdminPanel() {
             <form onSubmit={handleAddUser} className="space-y-4">
               <input type="email" required placeholder="Email" className="w-full border rounded px-3 py-2" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} />
               <input type="password" required placeholder="Şifre" className="w-full border rounded px-3 py-2" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
-              <select required className="w-full border rounded px-3 py-2" value={newUser.site} onChange={e => setNewUser({ ...newUser, site: e.target.value })}>
-                <option value="" disabled>Şantiye seçin</option>
-                {sites.map((site) => (
-                  <option key={site._id} value={site.name}>
-                    {site.name}
-                  </option>
-                ))}
-              </select>
+              {newUser.role === 'santiye_admin' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Şantiyeler (Çoklu seçim)</label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto border rounded p-2">
+                    {sites.map((site) => (
+                      <label key={site._id} className="flex items-center">
+                        <input
+                          type="checkbox"
+                          value={site.name}
+                          checked={newUser.sites?.includes(site.name) || false}
+                          onChange={(e) => {
+                            const siteName = e.target.value;
+                            const currentSites = newUser.sites || [];
+                            const updatedSites = e.target.checked
+                              ? [...currentSites, siteName]
+                              : currentSites.filter(s => s !== siteName);
+                            setNewUser({ ...newUser, sites: updatedSites, site: updatedSites[0] || '' });
+                          }}
+                          className="mr-2"
+                        />
+                        {site.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <select required className="w-full border rounded px-3 py-2" value={newUser.site} onChange={e => setNewUser({ ...newUser, site: e.target.value })}>
+                  <option value="" disabled>Şantiye seçin</option>
+                  {sites.map((site) => (
+                    <option key={site._id} value={site.name}>
+                      {site.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <select required className="w-full border rounded px-3 py-2" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                 <option value="user">User</option>
                 <option value="santiye_admin">Şantiye Admini</option>
@@ -393,14 +476,42 @@ export default function AdminPanel() {
             <form onSubmit={handleEditUser} className="space-y-4">
               <input type="text" disabled value={editUser.email} className="w-full border rounded px-3 py-2 bg-gray-100" />
               <input type="password" placeholder="Yeni Şifre (değiştirmek için yaz)" className="w-full border rounded px-3 py-2" value={editFields.password} onChange={e => setEditFields({ ...editFields, password: e.target.value })} />
-              <select required className="w-full border rounded px-3 py-2" value={editFields.site} onChange={e => setEditFields({ ...editFields, site: e.target.value })}>
-                <option value="" disabled>Şantiye seçin</option>
-                {sites.map((site) => (
-                  <option key={site._id} value={site.name}>
-                    {site.name}
-                  </option>
-                ))}
-              </select>
+              {editUser?.role === 'santiye_admin' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Şantiyeler (Çoklu seçim)</label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto border rounded p-2">
+                    {sites.map((site) => (
+                      <label key={site._id} className="flex items-center">
+                        <input
+                          type="checkbox"
+                          value={site.name}
+                          checked={editFields.sites?.includes(site.name) || false}
+                          onChange={(e) => {
+                            const siteName = e.target.value;
+                            const currentSites = editFields.sites || [];
+                            const updatedSites = e.target.checked
+                              ? [...currentSites, siteName]
+                              : currentSites.filter((s: string) => s !== siteName);
+                            console.log('Checkbox değişti:', { siteName, checked: e.target.checked, updatedSites });
+                            setEditFields({ ...editFields, sites: updatedSites, site: updatedSites[0] || '' });
+                          }}
+                          className="mr-2"
+                        />
+                        {site.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <select required className="w-full border rounded px-3 py-2" value={editFields.site} onChange={e => setEditFields({ ...editFields, site: e.target.value })}>
+                  <option value="" disabled>Şantiye seçin</option>
+                  {sites.map((site) => (
+                    <option key={site._id} value={site.name}>
+                      {site.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <div className="flex justify-end gap-2 mt-4">
                 <button type="button" onClick={() => setShowEditModal(false)} className="px-4 py-2 rounded bg-gray-300">İptal</button>
                 <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white">Kaydet</button>

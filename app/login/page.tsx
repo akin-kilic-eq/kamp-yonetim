@@ -42,6 +42,8 @@ export default function LoginPage() {
         email: response.user.email.toLowerCase(),
         role: response.user.role,
         site: response.user.site,
+        sites: response.user.sites || [],
+        activeSite: response.user.activeSite || response.user.site || '',
         isApproved: response.user.isApproved,
         siteAccessApproved: response.user.siteAccessApproved,
         sitePermissions: response.user.sitePermissions,
