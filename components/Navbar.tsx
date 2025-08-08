@@ -191,6 +191,14 @@ export default function Navbar() {
                 >
                   Kamplar
                 </button>
+                {currentUser.role === 'santiye_admin' && currentUser.site && (
+                  <button
+                    onClick={() => router.push(`/personnel/reports?site=${currentUser.site}`)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700"
+                  >
+                    Personel Raporu
+                  </button>
+                )}
                 <button
                   onClick={handleLogout}
                   className="bg-gray-200 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-300"

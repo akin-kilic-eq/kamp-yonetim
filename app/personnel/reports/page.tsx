@@ -50,6 +50,7 @@ function PersonnelReportsContent() {
   const [personnel, setPersonnel] = useState<Personnel[]>([]);
   const [loading, setLoading] = useState(true);
   const [userSite, setUserSite] = useState<string>('');
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [generalStats, setGeneralStats] = useState<GeneralStats>({
     totalPersonnel: 0,
     activePersonnel: 0,
@@ -182,6 +183,7 @@ function PersonnelReportsContent() {
       const userStr = sessionStorage.getItem('currentUser');
       if (userStr) {
         const user = JSON.parse(userStr);
+        setCurrentUser(user);
         setUserSite(user.site || '');
       }
     }
@@ -225,11 +227,21 @@ function PersonnelReportsContent() {
       <div className="container mx-auto px-4 py-8">
         <div className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl p-6">
           {/* Başlık */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              {userSite ? `${userSite} Personel Raporu` : 'Personel Raporu'}
-            </h1>
-            <p className="text-gray-600">Personel yönetimi istatistikleri ve özet bilgiler</p>
+          <div className="mb-8 flex justify-between items-start">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {userSite ? `${userSite} Personel Raporu` : 'Personel Raporu'}
+              </h1>
+              <p className="text-gray-600">Personel yönetimi istatistikleri ve özet bilgiler</p>
+            </div>
+            {currentUser && currentUser.role === 'santiye_admin' && (
+              <button
+                onClick={() => window.location.href = '/personnel'}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors duration-200"
+              >
+                Personel Listesi
+              </button>
+            )}
           </div>
 
           {/* Genel İstatistikler */}
