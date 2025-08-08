@@ -8,7 +8,7 @@ export default function Navbar() {
   const router = useRouter();
   const params = useParams();
   const [campName, setCampName] = useState('');
-  const [currentUser, setCurrentUser] = useState<{ email: string; role?: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email: string; role?: string; site?: string } | null>(null);
 
   useEffect(() => {
     const userSession = sessionStorage.getItem('currentUser');
@@ -120,6 +120,7 @@ export default function Navbar() {
         <div className="flex gap-6 items-center">
           <a href="/santiye-admin-paneli" className="hover:underline">Panel</a>
           <a href="/camps" className="hover:underline">Kamplar</a>
+          <a href={`/personnel/reports?site=${currentUser.site}`} className="hover:underline">Personel Raporu</a>
           <button
             onClick={() => {
               // Tüm kamp cache'lerini temizle
