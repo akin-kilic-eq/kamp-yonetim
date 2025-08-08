@@ -9,6 +9,7 @@ export default function Navbar() {
   const params = useParams();
   const [campName, setCampName] = useState('');
   const [currentUser, setCurrentUser] = useState<{ email: string; role?: string; site?: string } | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     const userSession = sessionStorage.getItem('currentUser');
@@ -26,6 +27,20 @@ export default function Navbar() {
       }
     }
   }, [params.camp]);
+
+  // Dropdown menüyü dışarı tıklandığında kapat
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isMenuOpen) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [isMenuOpen]);
 
   const handleLogout = () => {
     // Tüm kamp cache'lerini temizle
@@ -66,6 +81,96 @@ export default function Navbar() {
           >
             Çıkış
           </button>
+        </div>
+      </nav>
+    );
+  }
+
+  // Şantiye admini için personel sayfalarında beyaz navbar'a dropdown menü ekle
+  if (
+    currentUser &&
+    currentUser.role === 'santiye_admin' &&
+    typeof window !== 'undefined' &&
+    (window.location.pathname === '/personnel' || window.location.pathname === '/personnel/reports')
+  ) {
+    return (
+      <nav className="bg-white/90 backdrop-blur-sm shadow-lg relative z-[99999]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex">
+              <div className="flex-shrink-0 flex items-center">
+                <span className="text-xl font-bold text-gray-800">Kamp Yönetimi</span>
+              </div>
+            </div>
+            <div className="flex items-center">
+              {currentUser && (
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm text-gray-500">{currentUser.email}</span>
+                  
+                  {/* Dropdown Menü */}
+                  <div className="relative z-[9999999]">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsMenuOpen(!isMenuOpen);
+                      }}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 flex items-center"
+                    >
+                      Menü
+                      <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    
+                    {isMenuOpen && (
+                      <div 
+                        className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-[999999]"
+                        style={{ 
+                          position: 'absolute', 
+                          zIndex: 9999999
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <a
+                          href="/santiye-admin-paneli"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          Şantiye Admin Paneli
+                        </a>
+                        <a
+                          href="/camps"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          Kamplar
+                        </a>
+                        <hr className="my-1" />
+                        <button
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            // Tüm kamp cache'lerini temizle
+                            const keys = Object.keys(sessionStorage);
+                            keys.forEach(key => {
+                              if (key.startsWith('campsCache_')) {
+                                sessionStorage.removeItem(key);
+                              }
+                            });
+                            
+                            sessionStorage.removeItem('currentUser');
+                            router.push('/login');
+                          }}
+                          className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                        >
+                          Çıkış Yap
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </nav>
     );
@@ -138,6 +243,96 @@ export default function Navbar() {
           >
             Çıkış
           </button>
+        </div>
+      </nav>
+    );
+  }
+
+  // Şantiye admini için /camps sayfasında dropdown menülü navbar
+  if (
+    currentUser &&
+    currentUser.role === 'santiye_admin' &&
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/camps'
+  ) {
+    return (
+      <nav className="bg-white/90 backdrop-blur-sm shadow-lg relative z-[99999]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex">
+              <div className="flex-shrink-0 flex items-center">
+                <span className="text-xl font-bold text-gray-800">Kamp Yönetimi</span>
+              </div>
+            </div>
+            <div className="flex items-center">
+              {currentUser && (
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm text-gray-500">{currentUser.email}</span>
+                  
+                  {/* Dropdown Menü */}
+                  <div className="relative z-[9999999]">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsMenuOpen(!isMenuOpen);
+                      }}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 flex items-center"
+                    >
+                      Menü
+                      <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    
+                    {isMenuOpen && (
+                      <div 
+                        className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-[999999]"
+                        style={{ 
+                          position: 'absolute', 
+                          zIndex: 9999999
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <a
+                          href="/santiye-admin-paneli"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          Şantiye Admin Paneli
+                        </a>
+                        <a
+                          href={`/personnel/reports?site=${currentUser.site}`}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          Personel Raporu
+                        </a>
+                        <hr className="my-1" />
+                        <button
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            // Tüm kamp cache'lerini temizle
+                            const keys = Object.keys(sessionStorage);
+                            keys.forEach(key => {
+                              if (key.startsWith('campsCache_')) {
+                                sessionStorage.removeItem(key);
+                              }
+                            });
+                            
+                            sessionStorage.removeItem('currentUser');
+                            router.push('/login');
+                          }}
+                          className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                        >
+                          Çıkış Yap
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </nav>
     );
