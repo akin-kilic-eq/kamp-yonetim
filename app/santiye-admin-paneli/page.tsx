@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import Navbar from "@/components/Navbar";
 import { cache } from '@/app/lib/cache';
 import { useSearchParams } from 'next/navigation';
@@ -42,7 +42,7 @@ interface SitePermissions {
   canCreateCamps: boolean;
 }
 
-export default function SantiyeAdminPaneli() {
+function SantiyeAdminPaneliContent() {
   const searchParams = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [camps, setCamps] = useState<Camp[]>([]);
@@ -156,7 +156,7 @@ export default function SantiyeAdminPaneli() {
     fetchUsers();
     fetchCamps();
     fetchSites();
-  }, []);
+  }, [searchParams]);
 
   // Modal açıldığında izinleri state'e al
   useEffect(() => {
@@ -770,5 +770,30 @@ export default function SantiyeAdminPaneli() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SantiyeAdminPaneli() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex justify-center bg-cover bg-center bg-fixed" style={{ backgroundImage: "url('/arka-plan-guncel-2.jpg')" }}>
+        <div className="w-full">
+          <Navbar />
+          <div className="max-w-5xl mx-auto bg-white rounded-lg shadow-lg p-8 mt-10">
+            <div className="flex justify-center items-center py-20">
+              <div className="flex flex-col items-center">
+                <svg className="animate-spin h-8 w-8 text-blue-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                </svg>
+                <span className="text-blue-700 font-semibold text-lg">Yükleniyor...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    }>
+      <SantiyeAdminPaneliContent />
+    </Suspense>
   );
 } 
