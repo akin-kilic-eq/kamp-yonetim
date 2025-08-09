@@ -180,7 +180,14 @@ export default function RoomsPage() {
         (share) => share.email === user.email && share.permission === 'write'
       ) || false;
       const isKurucuAdmin = user.role === 'kurucu_admin';
-      const isSiteAdmin = user.role === 'santiye_admin' && user.site && camp.site === user.site;
+      // Şantiye admini: atandığı tüm şantiyelerde yazma yetkisi
+      const adminSites: string[] = [
+        ...(Array.isArray(user.sites) ? user.sites : []),
+        user.activeSite,
+        user.site
+      ].filter(Boolean);
+      const campSiteForCheck = camp.creatorSite || camp.site;
+      const isSiteAdmin = user.role === 'santiye_admin' && (!!campSiteForCheck ? adminSites.includes(campSiteForCheck) : true);
       
       // User rolü için şantiye erişim yetkisi ve izin kontrolü
       let userWriteAccess = false;

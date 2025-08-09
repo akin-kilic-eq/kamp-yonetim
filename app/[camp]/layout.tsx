@@ -11,6 +11,7 @@ interface Camp {
   userEmail: string;
   sharedWith: { email: string; permission: 'read' | 'write' }[];
   site?: string;
+  creatorSite?: string;
 }
 
 interface User {
@@ -64,23 +65,24 @@ export default function CampLayout({
         return;
       }
 
-      // Şantiye admini kendi şantiyesindeki user'ların kamplarına erişebilir
+      // Şantiye admini atandığı tüm şantiyelerdeki kamplara erişebilir
       if (currentUser.role === 'santiye_admin') {
-        // Şantiye admini için activeSite veya site kullan
-        const userSite = currentUser.activeSite || currentUser.site;
-        
+        const adminSites: string[] = [
+          ...(Array.isArray(currentUser.sites) ? currentUser.sites : []),
+          currentUser.activeSite,
+          currentUser.site
+        ].filter(Boolean) as string[];
+
+        const campSite = currentCamp.creatorSite || currentCamp.site;
         console.log('Şantiye admini kontrolü:', {
-          userSite: userSite,
-          campSite: currentCamp.site,
-          userRole: currentUser.role,
-          activeSite: currentUser.activeSite,
-          defaultSite: currentUser.site
+          adminSites,
+          campSite,
+          userRole: currentUser.role
         });
-        
-        // Kamp sahibinin şantiye bilgisini kontrol et
-        if (currentCamp.site === userSite) {
+
+        if (!campSite || adminSites.includes(campSite)) {
           console.log('Şantiye admini erişim verildi');
-          return; // Aynı şantiyedeki kamp, erişim ver
+          return;
         }
       }
 

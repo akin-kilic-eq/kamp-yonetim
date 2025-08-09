@@ -30,12 +30,18 @@ async function checkWritePermission(campId: string, userEmail: string): Promise<
     return true;
   }
 
-  // Şantiye admini kontrolü - kendi şantiyesindeki user'ların kamplarını düzenleyebilir
-  if (user && user.role === 'santiye_admin' && user.site) {
-    // Kamp sahibinin şantiye bilgisini kontrol et
+  // Şantiye admini kontrolü - atandığı tüm şantiyelerde tam yetki
+  if (user && user.role === 'santiye_admin') {
     const campOwner = await User.findOne({ email: camp.userEmail });
-    if (campOwner && campOwner.site === user.site) {
-      return true; // Aynı şantiyedeki user'ın kampı
+    const campSite = camp.creatorSite || camp.site || campOwner?.site;
+    const adminSites: string[] = [
+      ...(Array.isArray(user.sites) ? user.sites : []),
+      user.activeSite,
+      user.site
+    ].filter(Boolean) as string[];
+
+    if (!campSite || adminSites.includes(campSite)) {
+      return true; // Şantiye admininin atandığı şantiyelerden biri
     }
   }
   
@@ -43,12 +49,19 @@ async function checkWritePermission(campId: string, userEmail: string): Promise<
   if (user && user.role === 'user') {
     if (camp.userEmail === userEmail) {
       return true; // Kendi kampında tam yetki
-    } else if (user.siteAccessApproved && user.sitePermissions?.canEditCamps && user.site) {
-      const campOwner = await User.findOne({ email: camp.userEmail });
-      if (campOwner && campOwner.site === user.site) {
-        return true; // Şantiye erişim yetkisi ve düzenleme izni varsa
-      }
     }
+
+    const campSite = camp.creatorSite || camp.site;
+    if (
+      user.siteAccessApproved &&
+      user.sitePermissions?.canEditCamps &&
+      user.site &&
+      campSite &&
+      campSite === user.site
+    ) {
+      return true; // Aynı şantiyedeki kamp için düzenleme izni
+    }
+
     return false; // Diğer durumlarda sadece görüntüleme
   }
 

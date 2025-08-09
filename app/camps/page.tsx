@@ -434,8 +434,8 @@ export default function CampsPage() {
       const userStr = sessionStorage.getItem('currentUser');
       const user = JSON.parse(userStr || '{}');
       
-      // Admin kullanıcılar için loading gösterme
-      const shouldShowLoading = user.role === 'user';
+      // Admin kullanıcılar için loading gösterme (arka plan yenilemelerde gösterme)
+      const shouldShowLoading = user.role === 'user' && !isBackgroundRefresh;
       
       if (shouldShowLoading) {
         setIsLoading(true);
@@ -925,16 +925,11 @@ export default function CampsPage() {
       setError(response.error);
       return;
     }
-      setCamps([...camps, response]);
-      // Cache'i temizle - yeni kamp eklendi
+      // Yeni kampı listeye ekle
+      setCamps(prev => [...prev, response]);
+      // Cache'i temizle ve arkaplanda yenile
       clearCampsCache();
-      // Sadece user rolü için loading göster
-      if (currentUser?.role === 'user') {
-        setIsLoading(true);
-      }
-      
-      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
-      statsLoadedRef.current = false;
+      loadCamps(currentUser?.email || '', true);
       
       setShowAddModal(false);
       setNewCamp({ name: '', description: '' });
@@ -1107,15 +1102,9 @@ export default function CampsPage() {
       }
       const updatedCamps = camps.map(camp => camp._id === selectedCamp._id ? response : camp);
       setCamps(updatedCamps);
-      // Cache'i temizle - kamp düzenlendi
+      // Cache'i temizle ve arkaplanda listeyi yenile
       clearCampsCache();
-      // Sadece user rolü için loading göster
-      if (currentUser?.role === 'user') {
-        setIsLoading(true);
-      }
-      
-      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
-      statsLoadedRef.current = false;
+      loadCamps(currentUser?.email || '', true);
       
       setShowEditModal(false);
       setSelectedCamp(null);
@@ -1135,15 +1124,9 @@ export default function CampsPage() {
       }
       const updatedCamps = camps.filter(camp => camp._id !== selectedCamp._id);
       setCamps(updatedCamps);
-      // Cache'i temizle - kamp silindi
+      // Cache'i temizle ve arkaplanda listeyi yenile
       clearCampsCache();
-      // Sadece user rolü için loading göster
-      if (currentUser?.role === 'user') {
-        setIsLoading(true);
-      }
-      
-      // İstatistikleri yeniden yükle (useEffect otomatik olarak çağıracak)
-      statsLoadedRef.current = false;
+      loadCamps(currentUser?.email || '', true);
       
       setShowDeleteModal(false);
       setSelectedCamp(null);

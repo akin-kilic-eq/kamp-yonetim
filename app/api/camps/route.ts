@@ -117,14 +117,33 @@ export async function GET(request: Request) {
       } else if (user.site) {
         // Şantiye erişim yetkisi varsa ve şantiye bilgisi varsa
         if (user.sitePermissions?.canViewCamps) {
-          // Kamp görüntüleme izni varsa şantiyesindeki tüm kampları göster
+          // Kamp görüntüleme izni varsa kullanıcı sitesindeki kampları göster.
+          // Eski kayıtlarda site/creatorSite alanı olmayan kamplar için, sadece alanı olmayanları
+          // aynı sitedeki kullanıcıların e-postasına göre dahil et.
           const siteUsers = await User.find({ site: user.site });
           const siteUserEmails = siteUsers.map(u => u.email);
-          
+
           query = {
             $or: [
-              { userEmail: { $in: siteUserEmails } },
-              { "sharedWith.email": userEmail }
+              // Kampın kendi site bilgisinden eşleşme
+              { site: user.site },
+              { creatorSite: user.site },
+              // Geriye dönük veriler: site/creatorSite yoksa ve kamp sahibi aynı sitedense
+              {
+                $and: [
+                  { userEmail: { $in: siteUserEmails } },
+                  {
+                    $and: [
+                      { $or: [ { site: { $exists: false } }, { site: null }, { site: '' } ] },
+                      { $or: [ { creatorSite: { $exists: false } }, { creatorSite: null }, { creatorSite: '' } ] }
+                    ]
+                  }
+                ]
+              },
+              // Kullanıcıya paylaşılan kamplar
+              { "sharedWith.email": userEmail },
+              // Kullanıcının kendi kampları
+              { userEmail }
             ]
           };
         } else {
