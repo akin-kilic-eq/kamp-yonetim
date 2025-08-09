@@ -59,12 +59,30 @@ export default function PersonnelPage() {
       if (debouncedSearchTerm) params.append('search', debouncedSearchTerm);
       if (statusFilter !== 'all') params.append('status', statusFilter);
       
-      // Kullanıcının şantiye bilgisini al
-      const userStr = sessionStorage.getItem('currentUser');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        if (user.site) {
-          params.append('site', user.site);
+      // Şantiye seçimini öncelik sırasıyla al: URL ?site= -> activeSite -> site
+      const urlParams = new URLSearchParams(window.location.search);
+      let siteFromUrl = urlParams.get('site');
+      if (!siteFromUrl) {
+        // Rapor sayfasından gelirken active site'ı lastActiveSite_<email> altında saklıyoruz
+        const userStrTemp = sessionStorage.getItem('currentUser');
+        if (userStrTemp) {
+          try {
+            const u = JSON.parse(userStrTemp);
+            const lastActive = sessionStorage.getItem(`lastActiveSite_${u.email}`);
+            if (lastActive) siteFromUrl = lastActive;
+          } catch {}
+        }
+      }
+      if (siteFromUrl) {
+        params.append('site', siteFromUrl);
+      } else {
+        const userStr = sessionStorage.getItem('currentUser');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          const effectiveSite = user.activeSite || user.site;
+          if (effectiveSite) {
+            params.append('site', effectiveSite);
+          }
         }
       }
       
@@ -95,10 +113,23 @@ export default function PersonnelPage() {
 
   useEffect(() => {
     // Kullanıcının şantiye ve rol bilgisini al
+    const urlParams = new URLSearchParams(window.location.search);
+    let siteFromUrl = urlParams.get('site');
+    if (!siteFromUrl) {
+      const userStrTemp = sessionStorage.getItem('currentUser');
+      if (userStrTemp) {
+        try {
+          const u = JSON.parse(userStrTemp);
+          const lastActive = sessionStorage.getItem(`lastActiveSite_${u.email}`);
+          if (lastActive) siteFromUrl = lastActive;
+        } catch {}
+      }
+    }
     const userStr = sessionStorage.getItem('currentUser');
     if (userStr) {
       const user = JSON.parse(userStr);
-      setUserSite(user.site || '');
+      const effectiveSite = siteFromUrl || user.activeSite || user.site || '';
+      setUserSite(effectiveSite);
       setUserRole(user.role || '');
     }
     

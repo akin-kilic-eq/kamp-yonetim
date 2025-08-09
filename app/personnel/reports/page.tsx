@@ -461,7 +461,15 @@ function PersonnelReportsContent() {
             </div>
             {currentUser && currentUser.role === 'santiye_admin' && (
               <button
-                onClick={() => window.location.href = '/personnel'}
+                onClick={() => {
+                  let targetSite = currentUser.activeSite || currentUser.site || userSite;
+                  try {
+                    const lastActive = sessionStorage.getItem(`lastActiveSite_${currentUser.email}`);
+                    if (lastActive) targetSite = lastActive;
+                  } catch {}
+                  const url = targetSite ? `/personnel?site=${encodeURIComponent(targetSite)}` : '/personnel';
+                  window.location.href = url;
+                }}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors duration-200"
               >
                 Personel Listesi
