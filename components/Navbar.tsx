@@ -63,6 +63,69 @@ export default function Navbar() {
     }
   };
 
+  // Sadece personel puantaj sayfası için koyu/futuristik navbar
+  if (
+    typeof window !== 'undefined' &&
+    window.location.pathname === '/personnel/attendance' &&
+    currentUser
+  ) {
+    return (
+      <nav className="relative z-[99999] bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800 border-b border-white/10">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute -top-12 -left-24 w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl" />
+          <div className="absolute -bottom-12 -right-24 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl" />
+        </div>
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="h-16 flex items-center justify-between text-gray-100">
+            <div className="flex items-center gap-3">
+              <span className="text-base md:text-lg font-semibold tracking-wide text-white">Personel Puantajı</span>
+              <span className="hidden sm:inline text-sm text-gray-300">• Günün Kayıtları</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="hidden sm:inline text-sm text-gray-300">{currentUser.email}</span>
+              <div className="relative z-[9999999]">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMenuOpen(!isMenuOpen);
+                  }}
+                  className="px-3 py-2 rounded-md text-sm font-medium text-white border border-white/20 bg-white/10 hover:bg-white/20"
+                >
+                  Menü
+                </button>
+                {isMenuOpen && (
+                  <div
+                    className="absolute right-0 mt-2 w-56 rounded-md border border-white/15 bg-gray-900/95 shadow-lg backdrop-blur-md py-1"
+                    style={{ position: 'absolute', zIndex: 9999999 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <a href="/personnel" className="block px-4 py-2 text-sm text-gray-200 hover:bg-white/5" onClick={() => setIsMenuOpen(false)}>Personel Listesi</a>
+                    <a href="/personnel/attendance" className="block px-4 py-2 text-sm text-gray-200 hover:bg-white/5" onClick={() => setIsMenuOpen(false)}>Personel Puantajı</a>
+                    <a href="/personnel/reports" className="block px-4 py-2 text-sm text-gray-200 hover:bg-white/5" onClick={() => setIsMenuOpen(false)}>Personel Raporu</a>
+                    {currentUser.role === 'personel_admin' && (
+                      <a href="/personnel/settings" className="block px-4 py-2 text-sm text-gray-200 hover:bg-white/5" onClick={() => setIsMenuOpen(false)}>Ayarlar</a>
+                    )}
+                    <hr className="my-1 border-white/10" />
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        sessionStorage.removeItem('currentUser');
+                        router.push('/login');
+                      }}
+                      className="block w-full text-left px-4 py-2 text-sm text-red-300 hover:bg-white/5"
+                    >
+                      Çıkış
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </nav>
+    );
+  }
+
   // Personel yönetimi kullanıcıları için özel menü
   if (currentUser && (currentUser.role === 'personel_admin' || currentUser.role === 'personel_user')) {
     return (
@@ -101,6 +164,13 @@ export default function Navbar() {
                   onClick={() => setIsMenuOpen(false)}
                 >
                   Personel Listesi
+                </a>
+                <a
+                  href="/personnel/attendance"
+                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Personel Puantajı
                 </a>
                 <a
                   href="/personnel/reports"
@@ -142,7 +212,7 @@ export default function Navbar() {
     currentUser &&
     currentUser.role === 'santiye_admin' &&
     typeof window !== 'undefined' &&
-    (window.location.pathname === '/personnel' || window.location.pathname === '/personnel/reports')
+    (window.location.pathname === '/personnel' || window.location.pathname === '/personnel/reports' || window.location.pathname === '/personnel/attendance')
   ) {
     return (
       <nav className="bg-white/90 backdrop-blur-sm shadow-lg relative z-[99999]">
@@ -395,6 +465,13 @@ export default function Navbar() {
                           Şantiye Admin Paneli
                         </a>
                         <a
+                          href={`/personnel/attendance?site=${currentUser.activeSite || currentUser.site}`}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          Personel Puantajı
+                        </a>
+                        <a
                           href={`/personnel/reports?site=${currentUser.activeSite || currentUser.site}`}
                           className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                           onClick={() => setIsMenuOpen(false)}
@@ -474,7 +551,7 @@ export default function Navbar() {
             {currentUser && (
               <div className="flex items-center space-x-4">
                 <span className="text-sm text-gray-500">{currentUser.email}</span>
-                <button
+                 <button
                   onClick={() => router.push('/camps')}
                   className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700"
                 >
@@ -482,10 +559,10 @@ export default function Navbar() {
                 </button>
                 {currentUser.role === 'santiye_admin' && currentUser.site && (
                   <button
-                    onClick={() => router.push(`/personnel/reports?site=${currentUser.site}`)}
+                    onClick={() => router.push(`/personnel/attendance?site=${currentUser.site}`)}
                     className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700"
                   >
-                    Personel Raporu
+                    Personel Puantajı
                   </button>
                 )}
                 <button
