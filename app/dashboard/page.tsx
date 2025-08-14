@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cache } from '@/app/lib/cache';
+import PWAInstallButton from '../../components/PWAInstallButton';
 
 interface Worker {
   id: number;
@@ -417,6 +418,7 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
+              <PWAInstallButton />
               <button
                 onClick={() => router.push('/camps')}
                 className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 hover:scale-105 transition-all duration-300 ease-out transform hover:shadow-lg"

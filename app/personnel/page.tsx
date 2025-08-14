@@ -7,6 +7,7 @@ import EditPersonnelModal from './components/EditPersonnelModal';
 import ViewPersonnelModal from './components/ViewPersonnelModal';
 import ImportPersonnelModal from './components/ImportPersonnelModal';
 import DeleteAllPersonnelModal from './components/DeleteAllPersonnelModal';
+import PWAInstallButton from '../../components/PWAInstallButton';
 
 interface Personnel {
   _id: string;
@@ -273,6 +274,7 @@ export default function PersonnelPage() {
               {userSite ? `${userSite} Personel Yönetimi` : 'Personel Yönetimi'}
             </h1>
             <div className="flex gap-2">
+              <PWAInstallButton />
               <button
                 onClick={() => setShowImportModal(true)}
                 className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg flex items-center gap-1 text-sm"

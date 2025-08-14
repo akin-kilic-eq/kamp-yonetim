@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { login } from '../services/api';
+import PWAInstallButton from '../../components/PWAInstallButton';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -86,6 +87,7 @@ export default function LoginPage() {
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
             Giriş Yap
           </h2>
+          <PWAInstallButton />
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
