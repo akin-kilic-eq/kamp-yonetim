@@ -87,7 +87,6 @@ export default function LoginPage() {
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
             Giriş Yap
           </h2>
-          <PWAInstallButton />
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
@@ -149,6 +148,16 @@ export default function LoginPage() {
             </Link>
           </div>
         </form>
+        
+        {/* PWA İndirme Butonu - Footer'da */}
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="text-center">
+            <PWAInstallButton />
+            <p className="mt-2 text-xs text-gray-500">
+              Android tablet için uygulama olarak yükleyin
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

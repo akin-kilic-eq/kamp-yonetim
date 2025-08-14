@@ -13,7 +13,7 @@ interface BeforeInstallPromptEvent extends Event {
 
 export default function PWAInstallButton() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showInstallButton, setShowInstallButton] = useState(false);
+  const [showInstallButton, setShowInstallButton] = useState(true); // Her zaman görünür
   const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
@@ -21,6 +21,7 @@ export default function PWAInstallButton() {
     if (window.matchMedia('(display-mode: standalone)').matches || 
         (window.navigator as any).standalone === true) {
       setIsInstalled(true);
+      setShowInstallButton(false); // Yüklüyse gizle
       return;
     }
 
@@ -48,7 +49,11 @@ export default function PWAInstallButton() {
   }, []);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+      // PWA desteklenmiyorsa bilgi ver
+      alert('PWA yükleme özelliği bu cihazda desteklenmiyor. Android tablet ve Chrome browser kullanmayı deneyin.');
+      return;
+    }
 
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
@@ -71,8 +76,17 @@ export default function PWAInstallButton() {
     );
   }
 
+  // Artık her zaman görünür, sadece PWA yüklüyse gizlenir
   if (!showInstallButton) {
-    return null;
+    return (
+      <button
+        onClick={() => alert('PWA yükleme özelliği bu cihazda desteklenmiyor. Chrome browser kullanmayı deneyin.')}
+        className="inline-flex items-center gap-2 px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors text-sm"
+        title="PWA yükleme özelliği bu cihazda desteklenmiyor"
+      >
+        📱 PWA Desteklenmiyor
+      </button>
+    );
   }
 
   return (
