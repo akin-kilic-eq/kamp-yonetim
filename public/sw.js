@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kamp-yonetim-v1';
+const CACHE_NAME = 'kamp-yonetim-v2';
 const urlsToCache = [
   '/',
   '/login',
@@ -10,7 +10,8 @@ const urlsToCache = [
   '/reports',
   '/admin',
   '/antteq-logo.png',
-  '/arka-plan-guncel-2.jpg'
+  '/arka-plan-guncel-2.jpg',
+  '/manifest.json'
 ];
 
 // Service Worker kurulumu

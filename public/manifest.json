@@ -3,6 +3,7 @@
   "short_name": "Kamp Yönetimi",
   "description": "Kamp ve personel yönetim sistemi",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#000000",
